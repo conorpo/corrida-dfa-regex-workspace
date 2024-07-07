@@ -1,137 +1,155 @@
 // Don't want to implement the Allocator trait, because that expects tos support allocating arbitrary blocks of data. Our allocator will only support values of the same type.
 
-use std::{cell::{Cell, RefCell, UnsafeCell}, marker::PhantomData};
-use std::fmt::Display;
-struct Directed<'arena,T: Display> {
-    ele: T,
-    refs     : UnsafeCell<Vec<&'arena Directed<'arena, T>>>, 
-    back_refs: UnsafeCell<Vec<&'arena Directed<'arena, T>>>
-}
+use std::cell::UnsafeCell;
+use std::cell::Cell;
+use std::marker::PhantomData;
+use std::fmt::{Debug, Formatter, Error, Display};
 
-impl<'arena, T: Display> Directed<'arena, T> {
-    pub fn new(ele: T, refs: Vec<&'arena Directed<'arena, T>>, back_refs: Vec<&'arena Directed<'arena, T>>) -> Self {
-        Self {
-            ele,
-            refs: UnsafeCell::new(refs),
-            back_refs: UnsafeCell::new(back_refs)
-        }
+const BLOCK_SIZE : usize = 1024;
+
+struct ArenaVec<T> (UnsafeCell<Vec<T>>);
+
+impl<T> ArenaVec<T> {
+    fn new() -> Self {
+        Self (UnsafeCell::new(Vec::new()))
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
+        Self (UnsafeCell::new(Vec::with_capacity(capacity)))
     }
 }
 
-impl<'arena,T: Display> From<T> for Directed<'arena, T> {
-    fn from(ele: T) -> Self {
-        Self {
-            ele,
-            refs: UnsafeCell::new(Vec::new()),
-            back_refs: UnsafeCell::new(Vec::new())
-        }
-    }
-}
 
-impl<'arena, T: Display> std::fmt::Debug for Directed<'arena, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}", self.ele))
-    }
-}
 
-trait ArenaFighter<'arena> {
-    fn insertion_behavior(&'arena self);
-}
-
-impl<'arena, T: Display> ArenaFighter<'arena> for Directed<'arena, T> {
-    fn insertion_behavior(&'arena self) {
-        unsafe {
-            for forward_ref in (*self.refs.get()).iter() {
-                (*forward_ref.back_refs.get()).push(self);
-            }
-            for back_ref in (*self.back_refs.get()).iter() {
-                (*back_ref.refs.get()).push(self);
-            }
-        }
+pub trait ArenaFighter<'arena> {
+    // fn insertion_behaviour(&self, arena: &'arena SingleUseArena<'arena,T, Self>);
+    fn new() -> Self {
         
     }
 }
 
-
-struct Arena<'arena, F: ArenaFighter<'arena>> {
-    blocks: Vec<Vec<F>>,
-    idx: (usize, usize),
-    _boo: PhantomData<&'arena u32>
+struct Fighter<T> {
+    ele:T
 }
 
-const BLOCK_SIZE:usize = 1024;
+impl<T> ArenaFighter<'_> for Fighter<T> {}
+impl<T> From<T> for Fighter<T> {
+    fn from(ele:T) -> Self {
+        Self { ele }
+    }
+}
+impl<T: Display> Debug for Fighter<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        f.write_fmt(format_args!("{}", self.ele))
+    }
+}
 
-impl<'arena, F: ArenaFighter<'arena>> Arena<'arena, F> {
-    pub fn new() -> Self {
+// impl<T,'arena> ArenaFighter for Fighter<T> {
+//     fn insertion_behaviour(&self, &mut Arena< ) {
+        
+//     }
+// }
+
+struct EdgeFighter {}
+struct DirectedFighter<'arena, T> {
+    ele: T,
+    out: ArenaVec<&'arena Self>,
+    r#in: ArenaVec<&'arena Self>
+}
+
+impl<T> ArenaFighter<'_> for DirectedFighter<'_, T> {}
+
+struct SingleUseArena<'arena, F:ArenaFighter<'arena>> {
+    blocks: Vec<ArenaVec<F>>,
+    _boo: PhantomData<&'arena F>
+}
+
+impl<'arena, F:ArenaFighter<'arena>> SingleUseArena<'arena, F> {
+    fn new() -> Self {
         Self {
             blocks: Vec::new(),
-            idx: (0,0),
             _boo: PhantomData
+        }
+    }
+}
+
+struct Arena<'arena, F: ArenaFighter<'arena>> {
+    arena: SingleUseArena<'arena, F>,
+    idx: (usize, usize),
+    //_boo: PhantomData<T>
+}
+
+impl<'arena, T> Arena<'arena, Fighter<T>> {
+    pub fn new() -> Self {
+        Arena {
+            arena: SingleUseArena::<Fighter<T>>::new(),
+            idx: (0,0)
         }
     }
 
     /// Insert, Add, Append
-    fn push(&mut self, ele: F) -> &'arena F {
-        let new_fighter = ele;
+    pub fn push<IF: Into<Fighter<T>>>(&mut self, fighter: IF) -> &'arena Fighter<T> {
+        let new_fighter: Fighter<T> = fighter.into();
 
         let (block_index, slot_index) = self.idx;
 
-        if self.blocks.len() <= block_index {
-            self.blocks.push(Vec::with_capacity(BLOCK_SIZE));
-        }
+        let block = match self.arena.blocks.len() < block_index {
+            true => &self.arena.blocks[block_index],
+            false => {
+                self.arena.blocks.push(ArenaVec::with_capacity(BLOCK_SIZE));
+                &self.arena.blocks[block_index]
+            }
+        };
 
-        assert!(self.blocks.len() > block_index);
+        assert_eq!(block);
 
-        let slot = &mut (self.blocks[block_index][slot_index]);
+        let slot = unsafe {&mut (*block.0.get())[slot_index] };
+        *slot = new_fighter;
 
         if slot_index == BLOCK_SIZE - 1 {
             self.idx = (block_index + 1, 0);
         } else {
             self.idx = (block_index, slot_index + 1);
         }
-
-        *slot = new_fighter;
-
-        //(&*slot).insertion_behavior();
-
-        &*slot
+        
+        slot
     }
 
-    fn free(self) -> Self {
-        Self {
-            blocks: self.blocks,
-            idx: (0,0),
-            _boo: PhantomData
-        }    
+    /// Destroy, Clear
+    pub fn free(&mut self) {
+        self.idx = (0,0);
+    
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.idx.0 * BLOCK_SIZE + self.idx.1
     }
 }
 
-mod test {
-    use super::Arena;
-
-    #[cfg(test)]
+#[cfg(test)]
+mod test{
+    use super::{Fighter, Arena};
+    
+    #[test]
     fn test_reusability() {
-        use super::Directed;
-
-        let mut arena = Arena::<Directed<u32>>::new();
+        let mut arena = Arena::<Fighter<u32>>::new();
         {
-            let x = arena.push(1.into());
-            let y = arena.push(2.into());
-            let z = arena.push(3.into());
-            dbg!(x,y,z,arena.len());
+            let x = arena.push(1);
+            let y = arena.push(2);
+            let z = arena.push(3);
+
+            dbg!(x,y,z, arena.len());
         }
-        let mut arena = arena.free();
+        let f = arena.push(4);
+        arena.free();
+        dbg!(f);
+        dbg!(arena.len());
         {
-            let x = arena.push(1.into());
-            let y = arena.push(2.into());
-            let z = arena.push(3.into());
+            let x = arena.push(4);
+            let y = arena.push(5);
+            let z = arena.push(6);
 
-            dbg!(x,y,z);
+            dbg!(x,y,z, arena.len());
         }
     }
 }
-
