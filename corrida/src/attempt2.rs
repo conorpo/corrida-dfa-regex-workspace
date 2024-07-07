@@ -1,26 +1,25 @@
 use std::ptr::NonNull;
 use std::cell::{Cell,UnsafeCell};
 //use std::marker::PhantomData;
-//use std::fmt::{Debug, Display, Formatter};
-
+use std::fmt::{Debug, Display, Formatter, Error};
 
 const BLOCK_SIZE:usize = 1024;
 
-trait Fighter<T> {
+trait Fighter<T>{
     fn new(ele:T) -> Self;
 }
 
-
-
 /// Using the Arena with this Fighter allows you just to allocate values, not references between them.
 pub struct IsolatedFighter<T> {
-    ele: T,
+    pub ele: T,
     //_boo: PhantomData<&'arena Arena<IsolatedFighter<'arena, T>>>
 }
 
-// impl<T: Display> Debug for IsolatedFighter<T> {
-//     fn fmt(&self, )
-// }
+impl<T: Display> Debug for IsolatedFighter<T> {
+    fn fmt(&self,  fmt: &mut Formatter) -> Result<(),Error> {
+        fmt.write_fmt(format_args!("{}",self.ele))
+    }
+}
 
 impl<T> Fighter<T> for IsolatedFighter<T> {
     fn new(ele: T) -> Self {
@@ -37,13 +36,13 @@ pub struct ConnectedFighter<T> {
     edges: Vec<NonNull<ConnectedFighter<T>>>
 }
 
-impl<T> ConnectedFighter<T> {
-    fn edges_extend(&mut self, slice: &[ConnectedFighter<T>]) {
-        self.edges.extend(slice.into_iter().map(|fighter_ref| {
-            NonNull::new(fighter_ref as *const ConnectedFighter<T> as *mut ConnectedFighter<T>)
-        }))
-    }
-}
+// impl<T> ConnectedFighter<T> {
+//     fn edges_extend(&mut self, slice: &[ConnectedFighter<T>]) {
+//         self.edges.extend(slice.into_iter().map(|fighter_ref| {
+//             NonNull::new(fighter_ref as *const ConnectedFighter<T> as *mut ConnectedFighter<T>)
+//         }))
+//     }
+// }
 
 impl<T> Fighter<T> for ConnectedFighter<T> {
     fn new(ele: T) -> Self {
@@ -81,8 +80,8 @@ pub struct Block<F> {
 impl<F> Block<F> {
     fn new(prev: BlockLink<F>) -> Self {
         Self {
-            prev: None,
-            data: Vec::new()
+            prev,
+            data: Vec::with_capacity(BLOCK_SIZE)
         }
     }
 }
@@ -94,7 +93,7 @@ pub struct Arena<F> {
 }
 
 impl<F> Arena<F> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             cur_block: UnsafeCell::new(Self::new_block(None)),
             idx: Cell::new((0,0))
@@ -106,40 +105,51 @@ impl<F> Arena<F> {
             Block::new(prev)
         ))).unwrap()
     }
+
+    /// Returns the amount of fighters in the arena
+    pub fn len(&self) -> usize {
+        let idx = self.idx.get();
+        idx.0 * BLOCK_SIZE + idx.1
+    }
 }
 
-impl<'arena, T> Arena<IsolatedFighter<T>> {
-    fn alloc(&self, ele: T) -> &mut IsolatedFighter<T>{
-        let (_,slot_index) = self.idx.get();
+impl<T> Arena<IsolatedFighter<T>> {
+    pub fn alloc(&self, ele: T) -> &mut IsolatedFighter<T>{
+        let (mut block_index, mut slot_index) = self.idx.get();
 
         unsafe {
             let block_ptr = if slot_index == BLOCK_SIZE {
+                block_index += 1;
+                slot_index = 0;
+
                 let cur = self.cur_block.get();
                 let new_block = Self::new_block(Some(*cur));
                 *cur = new_block;
+
                 new_block.as_ptr()
             } else {
                 (*self.cur_block.get()).as_ptr()
             };
-    
     
             let new_figter = IsolatedFighter::new(ele);
     
             let slot = (*block_ptr).data.as_mut_ptr().add(slot_index);
     
             *slot = new_figter;
+            slot_index += 1;
+            self.idx.set((block_index, slot_index));
     
             &mut *slot
         }
     } 
-
-    fn free(self) {
-
+    
+    pub fn free(&mut self) {
+        self.idx.set((0,0))
     }
 }
 
 impl<T> Arena<ConnectedFighter<T>> {
-    fn alloc(&self, ele: T, edges: Vec<&ConnectedFighter<T>>) -> &mut ConnectedFighter<T> {
+    pub fn alloc(&self, ele: T, edges: Vec<&ConnectedFighter<T>>) -> &mut ConnectedFighter<T> {
         
         
         todo!()
@@ -152,18 +162,28 @@ mod test {
 
     #[test]
     fn test_isolated_arena() {
-        let arena = Arena::<IsolatedFighter<u32>>::new();
-
-        let x = arena.alloc(1);
-        let y = arena.alloc(2);
-        let z = arena.alloc(3);
-
+        let mut arena = Arena::<IsolatedFighter<u32>>::new();
+        {
+            let a = arena.alloc(1);
+            let b = arena.alloc(2);
+            let c = arena.alloc(3);
+            assert_eq!(a.ele, 1);
+            assert_eq!(b.ele, 2);
+            assert_eq!(c.ele, 3);
+            assert_eq!(arena.len(),3);
+        }
         arena.free();
-
-        let x = arena.alloc(4);
-        let y = arena.alloc(5);
-        let z = arena.alloc(6);
-
-        //dbg!(x,y,z,arena.len());
+        assert_eq!(arena.len(), 0);
+        {
+            let a = arena.alloc(4);
+            let b = arena.alloc(5);
+            let c = arena.alloc(6);
+            a.ele = 0;
+            c.ele = 10;
+            assert_eq!(a.ele, 0);
+            assert_eq!(b.ele, 5);
+            assert_eq!(c.ele, 10);
+            assert_eq!(arena.len(),3);
+        }
     }
 }

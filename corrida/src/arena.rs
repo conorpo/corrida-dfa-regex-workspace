@@ -23,9 +23,7 @@ impl<T> ArenaVec<T> {
 
 pub trait ArenaFighter<'arena> {
     // fn insertion_behaviour(&self, arena: &'arena SingleUseArena<'arena,T, Self>);
-    fn new() -> Self {
-        
-    }
+    fn new() -> Self 
 }
 
 struct Fighter<T> {
@@ -101,7 +99,8 @@ impl<'arena, T> Arena<'arena, Fighter<T>> {
             }
         };
 
-        assert_eq!(block);
+        assert_eq!(self.arena.blocks.len(), block_index - 1);
+        assert_eq!(block.)
 
         let slot = unsafe {&mut (*block.0.get())[slot_index] };
         *slot = new_fighter;
