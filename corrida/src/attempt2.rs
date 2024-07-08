@@ -87,19 +87,21 @@ impl<F> Block<F> {
 }
 
 pub struct Arena<F> {
-    cur_block: UnsafeCell<NonNull<Block<F>>>,
+    cur_block: Cell<NonNull<Block<F>>>,
     idx: Cell<(usize, usize)>,
     //_boo: PhantomData<& F>
 }
 
 impl<F> Arena<F> {
+    /// Creates a new arena of the fighter type provided in the type parameter, allocates one block to start off with.
     pub fn new() -> Self {
         Self {
-            cur_block: UnsafeCell::new(Self::new_block(None)),
+            cur_block: Cell::new(Self::new_block(None)),
             idx: Cell::new((0,0))
         }
     }
 
+    // Allocates a block on the heap, and returns a pointer to it.
     fn new_block(prev: Option<NonNull<Block<F>>>) -> NonNull<Block<F>> {
         NonNull::new(Box::into_raw(Box::new(
             Block::new(prev)
@@ -107,45 +109,64 @@ impl<F> Arena<F> {
     }
 
     /// Returns the amount of fighters in the arena
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> usize { 
         let idx = self.idx.get();
         idx.0 * BLOCK_SIZE + idx.1
     }
+
+    unsafe fn alloc_core(&self) -> NonNull<F> {
+        let (mut block_index, mut slot_index) = self.idx.get();
+
+        let block_ptr = if slot_index == BLOCK_SIZE {
+            block_index += 1;
+            slot_index = 0;
+
+            let prev = self.cur_block.get();
+            let new_block = Self::new_block(Some(prev));
+            self.cur_block.set(new_block);
+
+            new_block.as_ptr()
+        } else {
+            (self.cur_block.get()).as_ptr()
+        };
+
+        let slot = NonNull::new((*block_ptr).data.as_mut_ptr().add(slot_index)).unwrap();
+
+        slot_index += 1;
+        self.idx.set((block_index, slot_index));
+
+        slot
+    }
+
+    /// Resets the Arena for reuse, deallocating all blocks but the first one, and setting the index back to (0,0). Borrows self exclusively, so all borrows must end before this is called.
+    pub fn free(&mut self) {
+        unsafe {
+            self.idx.set((0,0));
+            let mut cur_block_ptr = self.cur_block.get().as_ptr();
+            while let Some(prev) = (*cur_block_ptr).prev.take() {
+                let _ = Box::from_raw(cur_block_ptr);
+                cur_block_ptr = prev.as_ptr();
+            }
+
+            self.cur_block.set(NonNull::new(cur_block_ptr).unwrap());
+        
+        }
+    }
+
 }
 
 impl<T> Arena<IsolatedFighter<T>> {
     pub fn alloc(&self, ele: T) -> &mut IsolatedFighter<T>{
-        let (mut block_index, mut slot_index) = self.idx.get();
-
-        unsafe {
-            let block_ptr = if slot_index == BLOCK_SIZE {
-                block_index += 1;
-                slot_index = 0;
-
-                let cur = self.cur_block.get();
-                let new_block = Self::new_block(Some(*cur));
-                *cur = new_block;
-
-                new_block.as_ptr()
-            } else {
-                (*self.cur_block.get()).as_ptr()
-            };
-    
-            let new_figter = IsolatedFighter::new(ele);
-    
-            let slot = (*block_ptr).data.as_mut_ptr().add(slot_index);
-    
-            *slot = new_figter;
-            slot_index += 1;
-            self.idx.set((block_index, slot_index));
-    
-            &mut *slot
+        unsafe { 
+            let slot = self.alloc_core();
+            (*slot.as_ptr()) = IsolatedFighter::new(ele);
+            &mut (*slot.as_ptr())
         }
     } 
     
-    pub fn free(&mut self) {
-        self.idx.set((0,0))
-    }
+    // pub fn free(&mut self) {
+    //     self.idx.set((0,0))
+    // }
 }
 
 impl<T> Arena<ConnectedFighter<T>> {
@@ -155,6 +176,10 @@ impl<T> Arena<ConnectedFighter<T>> {
         todo!()
     }
 }
+
+
+struct IntoIter<F>(Arena<F>);
+
 
 #[cfg(test)]
 mod test {
