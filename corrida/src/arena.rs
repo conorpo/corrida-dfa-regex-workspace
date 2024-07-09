@@ -55,8 +55,11 @@ impl<T> Arena<T> {
 
     pub fn alloc(&self, fighter: T) -> &mut T {
         unsafe {
+            println!("3.1");
             let slot = self.alloc_core();
+            println!("3.2");
             *slot.as_ptr() = fighter;
+            println!("3.3");
             &mut *slot.as_ptr()
         }
     }
@@ -66,6 +69,7 @@ impl<T> Arena<T> {
         let (mut block_index, mut slot_index) = self.idx.get();
 
         let block_ptr = if slot_index == BLOCK_SIZE {
+            println!("new block");
             block_index += 1;
             slot_index = 0;
 
@@ -75,12 +79,16 @@ impl<T> Arena<T> {
 
             new_block.as_ptr()
         } else {
+            println!("cur block");
             (self.cur_block.get()).as_ptr()
         };
+
+        dbg!(block_ptr, block_index, slot_index);
 
         let slot = unsafe {
             NonNull::new((*block_ptr).data.as_mut_ptr().add(slot_index)).unwrap()
         };
+        dbg!(slot);
 
         slot_index += 1;
         self.idx.set((block_index, slot_index));
