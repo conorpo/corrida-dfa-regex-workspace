@@ -1,27 +1,18 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use corrida::attempt2::*;
+use corrida::arena::*;
 
-struct Vertex {
-    transitions: HashMap<char, NonNull<Vertex>>,
+struct Vertex<Σ> {
+    transitions: HashMap<Σ, NonNull<Vertex<Σ>>>,
     accept: bool
 }
 
-pub struct DFA<'a> {
-    arena: Arena<Vertex>,
-    start_node: Option<&'a Vertex>
+pub struct DFA<'a, Σ> {
+    arena: Arena<Vertex<Σ>>,
+    start_node: Option<&'a Vertex<Σ>>
 }
 
-
-impl ArenaTrait<Vertex> for Arena<Vertex> {
-    fn alloc(&self, vert: Vertex) -> &mut Vertex {
-        let slot = self.alloc_core();
-
-        (*slot_)
-    }
-}
-
-impl<'a> DFA<'a> {
+impl<'a, Σ> DFA<'a, Σ> {
     fn new() -> Self {
         Self {
             arena: Arena::new(),
@@ -29,6 +20,19 @@ impl<'a> DFA<'a> {
         }
     }
 
-    fn insert_vertex(&self)
+    fn insert_vertex(&self, transitions: &[(Σ, &mut Vertex<Σ> )]) {
+        self.arena.alloc_core()
+    }
+}
 
+#[cfg(test)]
+mod test{
+    //use super::Vertex;
+    use super::DFA;
+
+    pub fn test_mixed_symbols() {
+        let dfa = DFA::new();
+
+        let a = );
+    }
 }
