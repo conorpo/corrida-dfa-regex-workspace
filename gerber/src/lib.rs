@@ -1,34 +1,50 @@
-//#![feature(trait_alias)]
+#![warn(missing_docs)]
+
+//! A simple DFA library to construct state machines, fast allocation using an a custom Arena implementation, and safe construction using Rust's borrow checker.
 
 use std::{collections::HashMap, ptr::NonNull};
 use std::cell::Cell;
+use std::fmt::Display;
 
 use corrida::arena::*;
 
-struct Vertex<Σ: Eq + core::hash::Hash + Copy> {
-    transitions: HashMap<Σ, NonNull<Vertex<Σ>>>,
-    accept: bool
+type VertexLink<Σ> = NonNull<Vertex<Σ>>;
+
+/// A node in the DFA, contains is_accept and a transition hashmap.
+pub struct Vertex<Σ: Eq + core::hash::Hash + Copy + Display> {
+    transitions: HashMap<Σ, VertexLink<Σ>>,
+    is_accept: bool
 }
 
-pub struct Dfa<'a, Σ: Eq + core::hash::Hash + Copy> {
+/// Provides an API for construction and simulation of a DFA structure. 
+/// Symbol type Σ must be hashable and implement display (not asking for alot here..)
+pub struct Dfa<Σ: Eq + core::hash::Hash + Copy + Display> {
     arena: Arena<Vertex<Σ>>,
-    start_node: Cell<Option<&'a Vertex<Σ>>>
+    start_node: Cell<Option<VertexLink<Σ>>>
 }
 
 
-impl<Σ:Eq + core::hash::Hash + Copy> Vertex<Σ> {
+impl<Σ:Eq + core::hash::Hash + Copy + Display> Vertex<Σ> {
     fn new(accept: bool) -> Self {
         Self {
             transitions: HashMap::new(),
-            accept
+            is_accept: accept
         }
     }
 
-    fn set_accept(&mut self, accept: bool) {
-        self.accept = accept;
+    /// Updates the accept state
+    pub fn set_accept(&mut self, accept: bool) {
+        self.is_accept = accept;
     }
 
-    fn append_transitions(&mut self, transitions: &[(Σ, Option<&Vertex<Σ>>)]){  
+    fn get_transition(&self, symbol: &Σ) -> Option<&Vertex<Σ>> {
+        self.transitions.get(symbol).map(|non_null_ref| {
+            unsafe { &*(*non_null_ref).as_ptr() }
+        })
+    }
+
+    /// Inserts the provided transitions into this vertex'es hashmap.
+    pub fn append_transitions(&mut self, transitions: &[(Σ, Option<&Vertex<Σ>>)]){  
         for (symbol, target_vert) in transitions.iter() {
             let vert_ref = match target_vert {
                 Some(vert_ref) => {
@@ -49,25 +65,45 @@ impl<Σ:Eq + core::hash::Hash + Copy> Vertex<Σ> {
     }
 }
 
-impl<'a, Σ:Eq + core::hash::Hash + Copy> Dfa<'a, Σ> {
-    fn new() -> Self {
+impl<Σ:Eq + core::hash::Hash + Copy + Display> Dfa<Σ> {
+    /// Creates a new DFA with no vertices, but an Arena ready for pushing verts.
+    pub fn new() -> Self {
         Self {
             arena: Arena::new(),
             start_node: Cell::new(None)
         }
     }
 
-    fn insert_vertex(&self, is_accept: bool, transitions: &[(Σ, Option<&Vertex<Σ>>)]) -> &mut Vertex<Σ> {
-        println!("1");
+    /// Insert a Vertex that is either accept or not accept, also provide transitions if they are known already. Both attributes can be updated later.
+    /// Transitions are a slice of tuples, where the 0th element is the symbol, and the 1st element is an option of a reference to the target vert. Putting None here implies a self-reference, as DFA's must have a reference to every symbol.
+    pub fn insert_vertex(&self, is_accept: bool, transitions: &[(Σ, Option<&Vertex<Σ>>)]) -> &mut Vertex<Σ> {
         let mut new_vertex = Vertex::<Σ>::new(is_accept);
-        println!("2");
         new_vertex.append_transitions(transitions);
-        println!("3");
         self.arena.alloc(new_vertex)
     }
 
-    fn set_start_node(&self, start_ref: &'a Vertex<Σ>) {
-        self.start_node.set(Some(start_ref));        
+    /// Updates the start node, takes a reference to a vertex.
+    pub fn set_start_node(&self, start_ref: &Vertex<Σ>) {
+        self.start_node.set(Some(NonNull::new(start_ref as *const Vertex<Σ> as *mut Vertex<Σ>).unwrap()));        
+    }   
+
+    /// Tests the provided input sequence, returning true if the DFA ends at an accept state.
+    pub fn simulate_slice(&mut self, input: &[Σ]) -> bool {
+        // Would like to get rid of unsafe code in simulation API, but that would require not storing references as NonNulls
+        let mut cur: &Vertex<Σ> = unsafe { self.start_node.get().expect("Start Node must be set before simulation.").as_mut() };
+        for symbol in input {
+            if let Some(next) = cur.get_transition(symbol) {
+                cur = next;
+            } else {
+                // Transition did not exist, DFA error
+                panic!("Transition not provided from current node on the '{symbol}' symbol.")
+            }
+        }
+        cur.is_accept
+    }
+
+    pub fn simulate_iter(&mut self, input: impl Iterator<Item = Σ>) {
+        
     }
 }
 
@@ -79,30 +115,75 @@ mod test{
     use super::Dfa;
 
     #[test]
-    pub fn test_mixed_symbols() {
-        let dfa = Dfa::<char>::new();
+    pub fn test_basics() {
+        let mut dfa = Dfa::<char>::new();
 
-        println!("test");
-        let s_0 = dfa.insert_vertex(true, &[]);
-        //let s_1 = dfa.insert_vertex(false, &[]);
-        // s_0.append_transitions(&[('0', None),('1',Some(s_1))]);
-        // let s_2 = dfa.insert_vertex(false, &[('0', Some(s_1)),('1', None)]);
-        // s_1.append_transitions(&[('1', Some(s_0)),('0',Some(s_2))]);
+        //println!("test");
+        {
+            let s_0 = dfa.insert_vertex(true, &[]);
+            let s_1 = dfa.insert_vertex(false, &[]);
+            s_0.append_transitions(&[('0', None),('1',Some(s_1))]);
+            let s_2 = dfa.insert_vertex(false, &[('0', Some(s_1)),('1', None)]);
+            s_1.append_transitions(&[('1', Some(s_0)),('0',Some(s_2))]);
 
-        // assert_eq!(dfa.arena.len(), 3);
-        
-        // //dfa.set_start_node(s_0);
-        // println!("Done");
+            unsafe{
+                let cur = (*s_0.transitions.get_mut(&'1').unwrap()).as_mut();
+                let cur = (*cur.transitions.get_mut(&'0').unwrap()).as_mut();
+                let cur = (*cur.transitions.get_mut(&'0').unwrap()).as_mut();
+                let cur = (*cur.transitions.get_mut(&'1').unwrap()).as_mut();
+    
+                assert_eq!(cur as *const Vertex<char>, s_0 as *const Vertex<char>);
+            }
+            dfa.set_start_node(s_0);
+        }
+        assert_eq!(dfa.arena.len(), 3);
 
-        // unsafe{
-        //     let cur = (*s_0.transitions.get_mut(&'1').unwrap()).as_mut();
-        //     let cur = (*cur.transitions.get_mut(&'0').unwrap()).as_mut();
-        //     let cur = (*cur.transitions.get_mut(&'0').unwrap()).as_mut();
-        //     let cur = (*cur.transitions.get_mut(&'1').unwrap()).as_mut();
+        assert_eq!(dfa.simulate_slice(&"1001".chars().collect::<Vec<char>>()), true);
+        assert_eq!(dfa.simulate_slice(&"1000".chars().collect::<Vec<char>>()), false);
+    }
 
-        //     assert_eq!(cur as *const Vertex<char>, s_0 as *const Vertex<char>);
-        // }
+    #[test]
+    fn test_big_string() {
+        let mut dfa = Dfa::<char>::new();
+        {
+            let s_0 = dfa.insert_vertex(true, &[]);
+            let s_1 = dfa.insert_vertex(false, &[]);
+            s_0.append_transitions(&[('0', None),('1',Some(s_1))]);
+            let s_2 = dfa.insert_vertex(false, &[('0', Some(s_1)),('1', None)]);
+            s_1.append_transitions(&[('1', Some(s_0)),('0',Some(s_2))]);
+            dfa.set_start_node(s_0);
+        }
 
-        //let a = );
+        let mut test_vec = Vec::new();
+
+        for _ in 0..1000000 {
+            test_vec.push('1');
+            test_vec.push('0');
+            test_vec.push('0');
+            test_vec.push('1');
+        }
+
+        assert_eq!(dfa.simulate_slice(&test_vec),true);
+    }
+
+    #[test]
+    #[should_panic]
+    fn check_missing_transition() {
+        let mut dfa = Dfa::<char>::new();
+        {
+            let s_0 = dfa.insert_vertex(true, &[]);
+            let s_1 = dfa.insert_vertex(false, &[]);
+            s_0.append_transitions(&[('0', None),('1',Some(s_1))]);
+            let s_2 = dfa.insert_vertex(false, &[('0', Some(s_1)),('1', None)]);
+            s_1.append_transitions(&[('1', Some(s_0))]); //s_1 has no transition on the '0' symbol.
+            dfa.set_start_node(s_0);
+        }
+
+        dfa.simulate_slice(&['1','0','0','1']);
+
+    }
+
+    #[test]
+    fn test_repeat_transitions() {
     }
 }

@@ -55,11 +55,8 @@ impl<T> Arena<T> {
 
     pub fn alloc(&self, fighter: T) -> &mut T {
         unsafe {
-            println!("3.1");
             let slot = self.alloc_core();
-            println!("3.2");
             *slot.as_ptr() = fighter;
-            println!("3.3");
             &mut *slot.as_ptr()
         }
     }
@@ -69,7 +66,6 @@ impl<T> Arena<T> {
         let (mut block_index, mut slot_index) = self.idx.get();
 
         let block_ptr = if slot_index == BLOCK_SIZE {
-            println!("new block");
             block_index += 1;
             slot_index = 0;
 
@@ -79,11 +75,8 @@ impl<T> Arena<T> {
 
             new_block.as_ptr()
         } else {
-            println!("cur block");
             (self.cur_block.get()).as_ptr()
         };
-
-        dbg!(block_ptr, block_index, slot_index);
 
         let slot = unsafe {
             NonNull::new((*block_ptr).data.as_mut_ptr().add(slot_index)).unwrap()
@@ -153,26 +146,26 @@ mod test {
     fn test_isolated_arena() {
         let mut arena = Arena::<u32>::new();
         {
-            // let a = arena.alloc(1.into());
-            // let b = arena.alloc(2.into());
-            // let c = arena.alloc(3.into());
-            // assert_eq!(a.ele, 1);
-            // assert_eq!(b.ele, 2);
-            // assert_eq!(c.ele, 3);
-            // assert_eq!(arena.len(),3);
+            let a = arena.alloc(1);
+            let b = arena.alloc(2);
+            let c = arena.alloc(3);
+            assert_eq!(*a, 1);
+            assert_eq!(*b, 2);
+            assert_eq!(*c, 3);
+            assert_eq!(arena.len(),3);
         }
         arena.free();
         assert_eq!(arena.len(), 0);
         {
-            // let a = arena.alloc(4.into());
-            // let b = arena.alloc(5.into());
-            // let c = arena.alloc(6.into());
-            // a.ele = 0;
-            // c.ele = 10;
-            // assert_eq!(a.ele, 0);
-            // assert_eq!(b.ele, 5);
-            // assert_eq!(c.ele, 10);
-            // assert_eq!(arena.len(),3);
+            let a = arena.alloc(4);
+            let b = arena.alloc(5);
+            let c = arena.alloc(6);
+            *a = 0;
+            *c = 10;
+            assert_eq!(*a, 0);
+            assert_eq!(*b, 5);
+            assert_eq!(*c, 10);
+            assert_eq!(arena.len(),3);
         }
     }
 }
