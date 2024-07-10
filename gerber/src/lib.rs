@@ -2,8 +2,8 @@
 
 //! A simple DFA library to construct state machines, fast allocation using an a custom Arena implementation, and safe construction using Rust's borrow checker.
 
-
-use std::{collections::HashMap, ptr::NonNull};
+use std::collections::{HashMap, HashSet};
+use std::ptr::NonNull;
 use std::cell::Cell;
 use std::fmt::Display;
 
@@ -111,8 +111,28 @@ impl<Σ:Eq + core::hash::Hash + Copy + Display> Dfa<Σ> {
 
 /// A node in the Nfa, transitions are stored as a hashmap to a vec of target ptrs. At what point do we have too much indirections?
 pub struct NfaVertex<Σ: Eq + core::hash::Hash + Copy + Display > {
-    transitions: HashMap<Option<Σ>, Vec<NonNull<NfaVertex<Σ>>>>,
+    transitions: HashMap<Option<Σ>, HashSet<NonNull<NfaVertex<Σ>>>>,
     is_accept: bool,
+}
+
+// Can't have duplicates, Maybe use Unionto merge to existing sets, is HashMap<HashSet<>> for each vertex worth it?
+impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaVertex<Σ> {
+    fn append_transitions(&mut self, transitions: &[(Option<Σ>, Vec<Option<&NfaVertex<Σ>>>)]) {
+        for (symbol, targets) in transitions {
+            let target_itr = targets.into_iter().map(|target_ref| {
+                let Some(target_ref) = target_ref.or(Some(self));
+                NonNull::new(target_ref as *const NfaVertex<Σ> as *mut NfaVertex<Σ>).unwrap()
+            });
+
+            if let Some(existing_set) = self.transitions.get_mut(symbol) {
+                for target in target_itr {
+                    existing_set.insert(target);
+                }
+            } else {
+            }
+        }
+
+    }
 }
 
 
@@ -144,7 +164,10 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
     /// 1st element is a Vec of some target verts or none for a self reference.
     pub fn insert_vertex(&self, is_accept: bool, transitions: &[(Option<Σ>, Vec<Option<&NfaVertex<Σ>>>)]) -> &mut NfaVertex<Σ> {
         let mut new_vertex = NfaVertex::<Σ>::new(is_accept);
-        todo!();
+        new_vertex.append_transitions(transitions);
+
+        let slot = self.arena.alloc(new_vertex);
+        slot
     }
 }
 
