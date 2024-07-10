@@ -5,3 +5,17 @@ version = 3
 [[package]]
 name = "amazon-interview-redemption-regex-parser"
 version = "0.1.0"
+dependencies = [
+ "gerber",
+]
+
+[[package]]
+name = "corrida"
+version = "0.1.0"
+
+[[package]]
+name = "gerber"
+version = "0.1.0"
+dependencies = [
+ "corrida",
+]
