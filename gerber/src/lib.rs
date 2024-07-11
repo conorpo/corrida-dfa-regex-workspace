@@ -47,23 +47,13 @@ impl<Σ:Eq + core::hash::Hash + Copy + Display> DfaVertex<Σ> {
 
     /// Inserts the provided transitions into this vertex'es hashmap.
     pub fn append_transitions(&mut self, transitions: &[(Σ, Option<&DfaVertex<Σ>>)]){  
-        for (symbol, target_vert) in transitions.iter() {
-            let vert_ref = match target_vert {
-                Some(vert_ref) => {
-                    *vert_ref
-                },
-                None => { 
-                    //DFA, so this is used to indicate a self reference. Actual pointers not exisiting in the hashmap leads to an option where None means transition not defined.
-                    &*self
-                }
-            };
+        let hashmap_iter = transitions.into_iter().map(|(symbol, opt)| {
+            let vert_ref = opt.or(Some(self)).unwrap() as *const DfaVertex<Σ> as *mut DfaVertex<Σ>;
 
+            (*symbol, NonNull::new(vert_ref).unwrap())
+        }).collect::<HashMap<Σ,NonNull<DfaVertex<Σ>>>>();
 
-            let target_ptr = unsafe {
-                NonNull::new(vert_ref as *const DfaVertex<Σ> as *mut DfaVertex<Σ>).unwrap()
-            };
-            self.transitions.insert(*symbol, target_ptr);
-        }
+        self.transitions.extend(hashmap_iter);
     }
 }
 
@@ -104,8 +94,17 @@ impl<Σ:Eq + core::hash::Hash + Copy + Display> Dfa<Σ> {
         cur.is_accept
     }
 
-    pub fn simulate_iter(&mut self, input: impl Iterator<Item = Σ>) {
-        
+    pub fn simulate_iter(&mut self, input: impl Iterator<Item = Σ>) -> bool {
+        let mut cur: &DfaVertex<Σ> = unsafe { self.start_node.get().expect("Start Node must be set before simulation.").as_mut() };
+        for symbol in input {
+            if let Some(next) = cur.get_transition(&symbol) {
+                cur = next;
+            } else {
+                // Transition did not exist, DFA error
+                panic!("Transition not provided from current node on the '{symbol}' symbol.")
+            }
+        }
+        cur.is_accept
     }
 }
 
@@ -117,25 +116,44 @@ pub struct NfaVertex<Σ: Eq + core::hash::Hash + Copy + Display > {
 
 // Can't have duplicates, Maybe use Unionto merge to existing sets, is HashMap<HashSet<>> for each vertex worth it?
 impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaVertex<Σ> {
-    fn append_transitions(&mut self, transitions: &[(Option<Σ>, Vec<Option<&NfaVertex<Σ>>>)]) {
+    /// Appends provided transition slice to vertex transitions. Provide transitions as tuple
+    /// 0th element is Some symbol, or None for an epsilon transition
+    /// 1st element is Some target vert (reference), or None for a self transition.
+    pub fn append_transitions(&mut self, transitions: &[(Option<Σ>, &[Option<&NfaVertex<Σ>>])]) {
         for (symbol, targets) in transitions {
-            let target_itr = targets.into_iter().map(|target_ref| {
-                let Some(target_ref) = target_ref.or(Some(self));
+            let mut transitions_hashset = HashSet::new();
+
+            targets.into_iter().map(|target_ref| {
+                let target_ref = target_ref.or(Some(self)).unwrap();
                 NonNull::new(target_ref as *const NfaVertex<Σ> as *mut NfaVertex<Σ>).unwrap()
+            }).for_each(|target_ptr| {
+                transitions_hashset.insert(target_ptr);
             });
 
             if let Some(existing_set) = self.transitions.get_mut(symbol) {
-                for target in target_itr {
-                    existing_set.insert(target);
-                }
+                existing_set.extend(transitions_hashset);
             } else {
+                self.transitions.insert(*symbol, transitions_hashset);
             }
         }
+    }
 
+    /// Creates a new NFA vertex, used internally when allocating
+    fn new(is_accept: bool) -> Self {
+        Self {
+            transitions: HashMap::new(),
+            is_accept
+        }
+    }
+
+    /// Updates the `is_accept` state of the vertex.
+    pub fn set_accept(&mut self, is_accept: bool) {
+        self.is_accept = is_accept;
     }
 }
 
-
+/// Provides an API for construction of an NFA. 
+/// Symbol type Σ must be hashable and implement display. 
 pub struct Nfa<Σ: Eq + core::hash::Hash + Copy + Display> {
     arena: Arena<NfaVertex<Σ>>,
     start_vert: Cell<Option<NonNull<NfaVertex<Σ>>>>
@@ -143,15 +161,10 @@ pub struct Nfa<Σ: Eq + core::hash::Hash + Copy + Display> {
 
 impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaVertex<Σ> {
     //Creates a new nfa vertex with no transitions, provide is_accept.
-    pub fn new(is_accept: bool) -> Self {
-        Self {
-            transitions: HashMap::new(),
-            is_accept
-        }
-    }
 }
 
 impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
+    /// Creates a new Nfa with no vertices, but an arena block ready for allocation
     pub fn new () -> Self {
         Self {
             arena: Arena::new(),
@@ -162,12 +175,25 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
     /// Inserts a a new vertex into the NFA, provide is_accept and transitions as a slice of tuples. 
     /// 0th element is Some symbol or none for epsilon.
     /// 1st element is a Vec of some target verts or none for a self reference.
-    pub fn insert_vertex(&self, is_accept: bool, transitions: &[(Option<Σ>, Vec<Option<&NfaVertex<Σ>>>)]) -> &mut NfaVertex<Σ> {
+    pub fn insert_vertex(&self, is_accept: bool, transitions: &[(Option<Σ>, &[Option<&NfaVertex<Σ>>])]) -> &mut NfaVertex<Σ> {
         let mut new_vertex = NfaVertex::<Σ>::new(is_accept);
         new_vertex.append_transitions(transitions);
 
         let slot = self.arena.alloc(new_vertex);
         slot
+    }
+
+    /// Updates the start node of the Nfa.
+    pub fn set_start_node(&self, start_node: &NfaVertex<Σ>) {
+        self.start_vert.set(Some({
+            NonNull::new(start_node as *const NfaVertex<Σ> as *mut NfaVertex<Σ>).unwrap()
+        }));
+    }
+
+    /// Turns our NFA into a DFA using subset construction.
+    pub fn into_dfa(self) -> Dfa<Σ> {
+
+        todo!();
     }
 }
 
@@ -176,10 +202,10 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
 
 #[cfg(test)]
 mod test{
-    use crate::DfaVertex;
+    //use crate::DfaVertex;
 
     //use super::Vertex;
-    use super::Dfa;
+    use super::{Dfa, Nfa, NfaVertex, DfaVertex};
 
     #[test]
     pub fn test_basics() {
@@ -235,7 +261,7 @@ mod test{
 
     #[test]
     #[should_panic]
-    fn check_missing_transition() {
+    fn test_dfa_missing_transition() {
         let mut dfa = Dfa::<char>::new();
         {
             let s_0 = dfa.insert_vertex(true, &[]);
@@ -251,6 +277,53 @@ mod test{
     }
 
     #[test]
-    fn test_repeat_transitions() {
+    fn test_dfa_repeated_transitions() {
+        let mut dfa = Dfa::<char>::new();
+        {
+            let s_0 = dfa.insert_vertex(true, &[]);
+            let s_1 = dfa.insert_vertex(false, &[]);
+            s_0.append_transitions(&[('0', None),('1',Some(s_1))]);
+            let s_2 = dfa.insert_vertex(false, &[('0', Some(s_1)),('1', None)]);
+            s_1.append_transitions(&[('1', Some(s_0)),('0',Some(s_2))]);
+            dfa.set_start_node(s_0);
+
+            s_0.append_transitions(&[('0', Some(s_2)), ('1',Some(s_1))]);
+            s_0.append_transitions(&[('0', None)]);
+
+            // s_0 updated a few extra times, should not add new entries in the hashmap, but just union and update repeats
+        }
+
+        assert!(dfa.simulate_iter(vec!['1','0','0','1'].into_iter()));
     }
+
+    #[test]
+    fn test_nfa() {
+        let nfa = Nfa::<char>::new();
+
+        {
+
+            let s_0 = nfa.insert_vertex(true, &[]);
+
+            let s_1 = nfa.insert_vertex(false, &[]);
+            let s_3 = nfa.insert_vertex(false, &[]);
+
+            s_0.append_transitions(&[(Some('a'), &[Some(s_1),Some(s_3)])]);
+
+            let s_2 = nfa.insert_vertex(true, &[]);
+            s_1.append_transitions(&[(Some('b'),&[Some(s_2)])]);
+
+            let s_4 = nfa.insert_vertex(false, &[]);
+            let s_5 = nfa.insert_vertex(false, &[]);
+            let s_6 = nfa.insert_vertex(true, &[]);
+            let s_7 = nfa.insert_vertex(true, &[]);
+        
+            s_3.append_transitions(&[(None, &[Some(s_4), Some(s_5)])]);
+
+            s_4.append_transitions(&[(Some('d'), &[Some(s_6)])]);
+            s_5.append_transitions(&[(Some('c'), &[Some(s_7)])]);
+
+            nfa.set_start_node(s_0);
+        }
+    }
+    
 }
