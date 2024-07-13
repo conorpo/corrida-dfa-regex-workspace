@@ -175,7 +175,7 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
     /// Inserts a a new vertex into the NFA, provide is_accept and transitions as a slice of tuples. 
     /// 0th element is Some symbol or none for epsilon.
     /// 1st element is a Vec of some target verts or none for a self reference.
-    pub fn insert_vertex(&self, is_accept: bool, transitions: &[(Option<Σ>, &[Option<&NfaVertex<Σ>>])]) -> &mut NfaVertex<Σ> {
+    pub fn insert_node(&self, is_accept: bool, transitions: &[(Option<Σ>, &[Option<&NfaVertex<Σ>>])]) -> &mut NfaVertex<Σ> {
         let mut new_vertex = NfaVertex::<Σ>::new(is_accept);
         new_vertex.append_transitions(transitions);
 
@@ -191,7 +191,7 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
     }
 
     /// Turns our NFA into a DFA using subset construction.
-    pub fn into_dfa(self) -> Dfa<Σ> {
+    pub fn to_dfa(&self) -> Dfa<Σ> {
 
         todo!();
     }
@@ -302,20 +302,20 @@ mod test{
 
         {
 
-            let s_0 = nfa.insert_vertex(true, &[]);
+            let s_0 = nfa.insert_node(true, &[]);
 
-            let s_1 = nfa.insert_vertex(false, &[]);
-            let s_3 = nfa.insert_vertex(false, &[]);
+            let s_1 = nfa.insert_node(false, &[]);
+            let s_3 = nfa.insert_node(false, &[]);
 
             s_0.append_transitions(&[(Some('a'), &[Some(s_1),Some(s_3)])]);
 
-            let s_2 = nfa.insert_vertex(true, &[]);
+            let s_2 = nfa.insert_node(true, &[]);
             s_1.append_transitions(&[(Some('b'),&[Some(s_2)])]);
 
-            let s_4 = nfa.insert_vertex(false, &[]);
-            let s_5 = nfa.insert_vertex(false, &[]);
-            let s_6 = nfa.insert_vertex(true, &[]);
-            let s_7 = nfa.insert_vertex(true, &[]);
+            let s_4 = nfa.insert_node(false, &[]);
+            let s_5 = nfa.insert_node(false, &[]);
+            let s_6 = nfa.insert_node(true, &[]);
+            let s_7 = nfa.insert_node(true, &[]);
         
             s_3.append_transitions(&[(None, &[Some(s_4), Some(s_5)])]);
 
