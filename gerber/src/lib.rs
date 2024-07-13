@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![feature(inline_const)]
 
 //! A simple DFA library to construct state machines, fast allocation using an a custom Arena implementation, and safe construction using Rust's borrow checker.
 
@@ -138,8 +139,8 @@ impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaVertex<Σ> {
         }
     }
 
-    /// Creates a new NFA vertex, used internally when allocating
-    fn new(is_accept: bool) -> Self {
+    /// Creates a new NFA vertex, used internally, does not allocate to the arena itself.
+    pub fn new_not_allocate(is_accept: bool) -> Self {
         Self {
             transitions: HashMap::new(),
             is_accept
@@ -176,7 +177,7 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
     /// 0th element is Some symbol or none for epsilon.
     /// 1st element is a Vec of some target verts or none for a self reference.
     pub fn insert_node(&self, is_accept: bool, transitions: &[(Option<Σ>, &[Option<&NfaVertex<Σ>>])]) -> &mut NfaVertex<Σ> {
-        let mut new_vertex = NfaVertex::<Σ>::new(is_accept);
+        let mut new_vertex = NfaVertex::<Σ>::new_not_allocate(is_accept);
         new_vertex.append_transitions(transitions);
 
         let slot = self.arena.alloc(new_vertex);

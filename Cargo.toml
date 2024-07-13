@@ -1,0 +1,7 @@
+[workspace]
+
+members = [
+    "corrida",
+    "gerber",
+    "amazon-interview-redemption-regex-parser"
+]

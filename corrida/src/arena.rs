@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use std::cell::{Cell,UnsafeCell};
 //use std::marker::PhantomData;
 use std::fmt::{Debug, Display, Formatter, Error};
@@ -20,6 +20,7 @@ impl<T> Block<T> {
         }
     }
 }
+
 
 pub struct Arena<T> {
     cur_block: Cell<NonNull<Block<T>>>,
@@ -56,7 +57,7 @@ impl<T> Arena<T> {
     pub fn alloc(&self, fighter: T) -> &mut T {
         unsafe {
             let slot = self.alloc_core();
-            *slot.as_ptr() = fighter;
+            ptr::write(slot.as_ptr(), fighter);
             &mut *slot.as_ptr()
         }
     }
@@ -81,7 +82,6 @@ impl<T> Arena<T> {
         let slot = unsafe {
             NonNull::new((*block_ptr).data.as_mut_ptr().add(slot_index)).unwrap()
         };
-        dbg!(slot);
 
         slot_index += 1;
         self.idx.set((block_index, slot_index));
@@ -90,16 +90,16 @@ impl<T> Arena<T> {
     }
 
     /// Resets the Arena for reuse, deallocating all blocks but the first one, and setting the index back to (0,0). Borrows self exclusively, so all borrows must end before this is called.
-    pub fn free(&mut self) {
+    pub fn reset(&mut self) {
         unsafe {
-            self.idx.set((0,0));
             let mut cur_block_ptr = self.cur_block.get().as_ptr();
             while let Some(prev) = (*cur_block_ptr).prev.take() {
                 let _ = Box::from_raw(cur_block_ptr);
                 cur_block_ptr = prev.as_ptr();
             }
-
+            
             self.cur_block.set(NonNull::new(cur_block_ptr).unwrap());
+            self.idx.set((0,0));
         
         }
     }
@@ -128,15 +128,16 @@ impl<T> Arena<T> {
 
 }
 
-// struct Iter<'a, T> {
-//     front: Option<NonNull<T>>,
-//     back: Option<NonNull<T>>,
-//     len: usize,
-//     _boo: PhantomData<&'a T>
-// }
+impl<T> Drop for Arena<T> {
+    fn drop(&mut self) {
+        self.reset();
 
-// impl 
-
+        unsafe { 
+            let _ = Box::from_raw(self.cur_block.get().as_ptr());
+            self.idx.take(); //take that shit before we leave
+        };
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -154,7 +155,7 @@ mod test {
             assert_eq!(*c, 3);
             assert_eq!(arena.len(),3);
         }
-        arena.free();
+        arena.reset();
         assert_eq!(arena.len(), 0);
         {
             let a = arena.alloc(4);
