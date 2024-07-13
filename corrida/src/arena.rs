@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
-use std::cell::{Cell,UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 //use std::marker::PhantomData;
 use std::fmt::{Debug, Display, Formatter, Error};
+use std::rc::Rc;
 
 const BLOCK_SIZE:usize = 1024;
 
@@ -139,9 +140,31 @@ impl<T> Drop for Arena<T> {
     }
 }
 
+struct SelfRef(Option<Rc<RefCell<SelfRef>>>);
+
+
+
+
 #[cfg(test)]
 mod test {
+    use std::{borrow::{Borrow, BorrowMut}, cell::{Cell, RefCell}};
+
     use super::{Arena};
+
+    #[test]
+    fn test() {
+        use super::{SelfRef};
+        use std::rc::Rc;
+        let mut a = Rc::new(RefCell::new(SelfRef(None)));
+        (*a).borrow_mut().0 = Some(a.clone());
+
+        let mut i = 0;
+        let mut cur = a.clone();
+        loop {
+            let cur = (*cur).borrow_mut().0.as_ref().expect("its gone!").clone();
+        }
+        
+    }
 
     #[test]
     fn test_isolated_arena() {
