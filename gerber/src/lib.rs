@@ -1,5 +1,4 @@
 #![warn(missing_docs)]
-#![feature(inline_const)]
 
 //! A simple DFA library to construct state machines, fast allocation using an a custom Arena implementation, and safe construction using Rust's borrow checker.
 
@@ -8,7 +7,9 @@ use std::ptr::NonNull;
 use std::cell::Cell;
 use std::fmt::Display;
 
-use corrida::arena::{self, *};
+use impls::impls;
+
+use corrida::*;
 
 type VertexLink<Σ> = NonNull<DfaVertex<Σ>>;
 
@@ -322,5 +323,10 @@ mod test{
             nfa.set_start_node(s_0);
         }
     }
-    
+
+
+    #[test]
+    fn test_unpin() {
+        assert!(impls::impls!(NfaVertex<char>: Unpin));
+    }
 }
