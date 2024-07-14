@@ -4,12 +4,12 @@ use gerber::*;
 use std::{cell::{Cell, OnceCell, Ref, RefCell, UnsafeCell}, collections::HashMap, iter::Peekable, rc::Rc, str::Chars};
 
 // To avoid option hell or having to delete and merge nodes, introduce a shared mutable reference
-type NodeAlias<'a> = Rc<RefCell<&'a mut NfaVertex<char>>>;
+type NodeAlias<'a> = Rc<RefCell<&'a mut NfaNode<char>>>;
 
 // const DUMMY_REF: OnceCell::<NfaVertex<char>> = OnceCell::new();
 enum Pattern<'a> {
-    NonEmpty(&'a mut NfaVertex<char>, &'a mut NfaVertex<char>),
-    Empty(&'a mut NfaVertex<char>)
+    NonEmpty(&'a mut NfaNode<char>, &'a mut NfaNode<char>),
+    Empty(&'a mut NfaNode<char>)
 }
 
 // Designing systems is usually a spectrum between state affecting procedures, or procedures emulating state.
@@ -138,7 +138,7 @@ impl RegexParser<'_> {
 pub fn create_regex_dfa(regex_string: &str) -> Nfa<char> {
     // Easier to create it as an NFA first, then convert using Subset Construction.
     let nfa = Nfa::<char>::new();
-    let start_node = nfa.insert_node(false, &[]);
+    let start_node = nfa.alloc_node(false, &[]);
     nfa.set_start_node(start_node);
 
     // Setup our recusrive parser, including setup up a static dummy node, in order to get away with Cell replace shenanigans.
