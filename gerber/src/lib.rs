@@ -1,5 +1,4 @@
 #![warn(missing_docs)]
-#![feature(inline_const)]
 
 //! A simple DFA library to construct state machines, fast allocation using an a custom Arena implementation, and safe construction using Rust's borrow checker.
 
@@ -8,7 +7,9 @@ use std::ptr::NonNull;
 use std::cell::Cell;
 use std::fmt::Display;
 
-use corrida::arena::{self, *};
+use impls::impls;
+
+use corrida::*;
 
 type VertexLink<Σ> = NonNull<DfaVertex<Σ>>;
 
@@ -110,13 +111,13 @@ impl<Σ:Eq + core::hash::Hash + Copy + Display> Dfa<Σ> {
 }
 
 /// A node in the Nfa, transitions are stored as a hashmap to a vec of target ptrs. At what point do we have too much indirections?
-pub struct NfaVertex<Σ: Eq + core::hash::Hash + Copy + Display > {
+pub struct NfaVertex<Σ: Eq + core::hash::Hash + Copy + Display + Unpin > {
     transitions: HashMap<Option<Σ>, HashSet<NonNull<NfaVertex<Σ>>>>,
     is_accept: bool,
 }
 
 // Can't have duplicates, Maybe use Unionto merge to existing sets, is HashMap<HashSet<>> for each vertex worth it?
-impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaVertex<Σ> {
+impl<Σ: Eq + core::hash::Hash + Copy + Display + Unpin> NfaVertex<Σ> {
     /// Appends provided transition slice to vertex transitions. Provide transitions as tuple
     /// 0th element is Some symbol, or None for an epsilon transition
     /// 1st element is Some target vert (reference), or None for a self transition.
@@ -155,16 +156,12 @@ impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaVertex<Σ> {
 
 /// Provides an API for construction of an NFA. 
 /// Symbol type Σ must be hashable and implement display. 
-pub struct Nfa<Σ: Eq + core::hash::Hash + Copy + Display> {
+pub struct Nfa<Σ: Eq + core::hash::Hash + Copy + Display + Unpin> {
     arena: Arena<NfaVertex<Σ>>,
     start_vert: Cell<Option<NonNull<NfaVertex<Σ>>>>
 }
 
-impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaVertex<Σ> {
-    //Creates a new nfa vertex with no transitions, provide is_accept.
-}
-
-impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
+impl <Σ: Eq + core::hash::Hash + Copy + Display + Unpin> Nfa<Σ> {
     /// Creates a new Nfa with no vertices, but an arena block ready for allocation
     pub fn new () -> Self {
         Self {
@@ -326,5 +323,10 @@ mod test{
             nfa.set_start_node(s_0);
         }
     }
-    
+
+
+    #[test]
+    fn test_unpin() {
+        assert!(impls::impls!(NfaVertex<char>: Unpin));
+    }
 }
