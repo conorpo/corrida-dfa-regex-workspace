@@ -17,9 +17,9 @@ use gerber::*;
 
 
 // To avoid option hell or having to delete and merge nodes, introduce a shared mutable reference
-type NodeAlias<'a> = &'a mut NfaVertex<char>;
+type NodeAlias<'a> = &'a mut NfaNode<char>;
 
-// const DUMMY_REF: OnceCell::<NfaVertex<char>> = OnceCell::new();
+// const DUMMY_REF: OnceCell::<NfaNode<char>> = OnceCell::new();
 enum Pattern<'a> {
     NonEmpty(NodeAlias<'a>, NodeAlias<'a>),
     Empty(NodeAlias<'a>)
@@ -213,6 +213,129 @@ impl<'a> RegexParser<'a> {
             }
         }
     }
+
+}
+
+
+struct RegexParserNewNfa<'a> {
+    nfa: SharedRefNfa<char>,
+    iter: Peekable<Chars<'a>>
+}
+
+type NewPattern<'a> = Option<(&'a NfaState, &'a NfaState)>;
+
+impl<'a> RegexParserNewNfa<'a> {
+    pub fn from(str: &'a str) -> Self {
+        let me = Self {
+            nfa: SharedRefNfa::new(),
+            iter: str.chars().peekable()
+        };
+
+        me.parse_group();
+
+        me
+    }
+
+    pub fn parse_symbol(&mut self, mut cur: &'a NfaState) -> NewPattern
+
+    pub fn parse_concat(&mut self, mut cur: &'a NfaState) -> NewPattern {
+        //Parse symbols recursively, concating before providing cur node
+        let concat_start = cur;
+
+        // Ended by | or ) or EOF
+        // Doesn't eat itself
+        
+        while let Some(c) = self.iter.peek() {
+            match c {
+                '|' | ')' => {
+                    break;
+                }, 
+                '(' => {
+                    match self.parse_group(cur) {
+                        Some((start, end)) => {
+                            cur = end;
+                        },
+                        None => {
+                            //It was empty pattern, nothing to concat
+                        }
+                    }
+                }
+                _ => {
+                    match self.parse_symbol(cur) {
+                        Some((start, end)) {
+                            cur = end;
+                        },
+                        None => {
+                            panic!("How did we get here?")
+                        }
+                    }
+                    // At this point we are either at a new symbol, or | ) EOF or (
+                }
+            }
+        }
+
+        if concat_start == cur {
+            return None;
+        }
+
+        Some((concat_start, cur))
+    }
+
+    pub fn parse_group(&mut self, mut cur: &'a NfaState) -> (&'a NfaState, &'a NfaState) {
+        let union_buffer: NewPattern = None;
+        let group_start = self.nfa.insert_state();
+
+        let (pattern_start, pattern_end) = (group_start, group_start);
+
+        while let Some(c) = self.iter.peek() {
+            match c {
+                '(' => {
+                    let (start, end) = self.parse_group(cur);
+                    cur = end;
+                    self.iter.next(); // Eat, next char should be a )
+
+                    
+                    // Just concat, operators will be handled next time
+                },
+                '+' | '?' | '*' => {
+                    // Eat operators until there isn't one
+                    let mut add_skip = false;
+                    let mut add_cycle = false;
+
+                    self.iter.next();
+                    while let Some(c) = self.iter.peek() {
+                        match c {
+                            '+' => {
+                                add_cycle = true;
+                            },
+                            '*' => {
+                                add_cycle = true;
+                                add_skip = true;
+                            },
+                            '?' => {
+                                add_skip = true;
+                            },
+                            _ => {
+                                break;
+                            }
+                        }
+                        self.iter.next(); //eat
+                    }    
+
+                    if add_skip {
+                        self.nfa.insert_transition(pattern_start, pattern_end, None);
+                    }
+                    if add_cycle {
+                        self.nfa.insert_transition(pattern_end, pattern_start, None);
+                    }
+                }
+            }
+        }
+
+
+        todo!();
+    }
+
 
 }
 

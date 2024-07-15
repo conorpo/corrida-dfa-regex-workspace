@@ -3,6 +3,7 @@
 //! A simple DFA library to construct state machines, fast allocation using an a custom Arena implementation, and safe construction using Rust's borrow checker.
 
 use std::collections::{HashMap, HashSet};
+use std::pin::Pin;
 use std::ptr::NonNull;
 use std::cell::Cell;
 use std::fmt::Display;
@@ -192,6 +193,51 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
     pub fn to_dfa(&self) -> Dfa<Σ> {
 
         todo!();
+    }
+}
+
+// TODO: Decide on the best Nfa implementation
+pub struct NfaState {
+    // With this method, the nodes are just keys, no point in the arena in the first place.
+    // But will try implementing for posterity.
+}
+/// Nfa that provides shared references to nodes, transitions are owned by the Nfa itself.
+pub struct SharedRefNfa<Σ: Eq + core::hash::Hash + Copy + Display> {
+    arena: Arena<NfaState>,
+    hashmap: HashMap<(*const NfaState, Option<Σ>), Vec<NonNull<NfaState>>>,
+    starting_node: Option<NonNull<NfaState>>,
+}
+
+impl<Σ: Eq + core::hash::Hash + Copy + Display> SharedRefNfa<Σ> {
+    /// Creates a new shared ref nfa.
+    pub fn new() -> Self {
+        Self {
+            arena: Arena::new(),
+            hashmap: HashMap::new(),
+            starting_node: None,
+        }
+    }
+
+    ///
+    pub fn insert_state(&mut self) -> &NfaState {
+        let new_state = NfaState {};
+
+        self.arena.alloc(new_state)
+    }
+
+    /// Inserts a transition into the Nfa
+    pub fn insert_transition(&mut self, from: &NfaState, to: &NfaState, on: Option<Σ>) {
+        let key = (from as *const NfaState, on);
+        let nonnull_to = NonNull::from(to);    
+
+        match self.hashmap.get_mut(&key) {
+            Some(existing) => {
+                existing.push(nonnull_to);
+            },
+            None => {
+                self.hashmap.insert(key, vec![nonnull_to]);
+            }
+        };
     }
 }
 
