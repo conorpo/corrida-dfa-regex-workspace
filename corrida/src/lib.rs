@@ -1,21 +1,23 @@
 #![warn(missing_docs)]
+//#![feature(allocate_api)]
 
 //! Typed Bump Allocator
 //! 
 //! - Useful as for cache-friendly accesses of collection.
 //! - 
+//! 
 
-use std::marker::PhantomData;
+mod alloc;
+mod toy_structures;
+
 use std::ptr::{self, NonNull};
 use std::cell::{Cell, RefCell, UnsafeCell};
-//use std::marker::PhantomData;
 use std::fmt::{Debug, Display, Formatter, Error};
-use std::rc::Rc;
 
 const BLOCK_SIZE:usize = 1024;
 
 type BlockLink<F> = Option<NonNull<Block<F>>>;
-pub struct Block<T> {
+struct Block<T> {
     prev: BlockLink<T>,
     data: Vec<T>
 }
@@ -29,14 +31,16 @@ impl<T> Block<T> {
     }
 }
 
-
+/// One time use bump allocator.
+/// Useful for many allocations of the same type
+/// Self references are easy because all lifetimes are garunteed to live for the whole arena.n
 pub struct Arena<T> {
     cur_block: Cell<NonNull<Block<T>>>,
     idx: Cell<(usize, usize)>,
     //_boo: PhantomData<& F>
 }
 
-impl<T> Arena<T> {
+impl<'a, T> Arena<T> {
     /// Creates a new arena of the fighter type provided in the type parameter, allocates one block to start off with.
     pub fn new() -> Self {
         Self {
@@ -58,11 +62,14 @@ impl<T> Arena<T> {
         idx.0 * BLOCK_SIZE + idx.1
     }
 
+    /// True until the arena is first fighter is added
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn alloc(&self, fighter: T) -> &mut T {
+    /// Allocates a type T in the current slot and returns an exlusive
+    /// references to it.
+    pub fn alloc(&self, fighter: T) -> &'a mut T {
         unsafe {
             let slot = self.alloc_core();
             ptr::write(slot.as_ptr(), fighter);
@@ -70,7 +77,8 @@ impl<T> Arena<T> {
         }
     }
 
-
+    // Gets a pointer to the current slot, then increments the index
+    // Handles creating a new block if needed.
     unsafe fn alloc_core(&self) -> NonNull<T> {
         let (mut block_index, mut slot_index) = self.idx.get();
 
@@ -95,21 +103,6 @@ impl<T> Arena<T> {
         self.idx.set((block_index, slot_index));
 
         slot
-    }
-
-    /// Resets the Arena for reuse, deallocating all blocks but the first one, and setting the index back to (0,0). Borrows self exclusively, so all borrows must end before this is called.
-    pub fn reset(&mut self) {
-        unsafe {
-            let mut cur_block_ptr = self.cur_block.get().as_ptr();
-            while let Some(prev) = (*cur_block_ptr).prev.take() {
-                let _ = Box::from_raw(cur_block_ptr);
-                cur_block_ptr = prev.as_ptr();
-            }
-            
-            self.cur_block.set(NonNull::new(cur_block_ptr).unwrap());
-            self.idx.set((0,0));
-        
-        }
     }
 
     // pub fn iter(&mut self) -> Iter<'_, T> {
@@ -138,15 +131,17 @@ impl<T> Arena<T> {
 
 impl<T> Drop for Arena<T> {
     fn drop(&mut self) {
-        self.reset();
+        unsafe {
+            let mut cur_block_opt = Some(self.cur_block.get());
+            while let Some(cur_block_ptr) = cur_block_opt {
+                let owned = Box::from_raw(cur_block_ptr.as_ptr());
+                cur_block_opt = owned.prev;
+            }   
 
-        unsafe { 
-            let _ = Box::from_raw(self.cur_block.get().as_ptr());
             self.idx.take(); //take that shit before we leave
-        };
+        }
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -164,18 +159,24 @@ mod test {
             assert_eq!(*c, 3);
             assert_eq!(arena.len(),3);
         }
-        arena.reset();
-        assert_eq!(arena.len(), 0);
-        {
-            let a = arena.alloc(4);
-            let b = arena.alloc(5);
-            let c = arena.alloc(6);
-            *a = 0;
-            *c = 10;
-            assert_eq!(*a, 0);
-            assert_eq!(*b, 5);
-            assert_eq!(*c, 10);
-            assert_eq!(arena.len(),3);
-        }
     }
+
+    // Well its slower than General Allocator...
+    #[test]
+    fn test_large() {
+        use std::time::*;
+        // Each fighter is 4*16, 64 bytes
+        let start = Instant::now();
+        let mut arena = Arena::<[u32;16]>::new();
+        for i in 0..5_000_000 {
+            let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
+        }
+        dbg!(start.elapsed());
+        assert!(start.elapsed() < Duration::from_millis(500))
+    }
+
+}
+
+mod benchmark {
+    
 }
