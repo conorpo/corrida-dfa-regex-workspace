@@ -1,18 +1,18 @@
+#![feature(allocator_api)]
+#![feature(ptr_metadata)]
+#![feature(non_null_convenience)]
 #![warn(missing_docs)]
 //#![feature(allocate_api)]
 
 //! Typed Bump Allocator
 //! 
 //! - Useful as for cache-friendly accesses of collection.
-//! - 
-//! 
 
-mod alloc;
-mod toy_structures;
+pub mod alloc;
+pub mod toy_structures;
 
 use std::ptr::{self, NonNull};
-use std::cell::{Cell, RefCell, UnsafeCell};
-use std::fmt::{Debug, Display, Formatter, Error};
+use std::cell::{Cell};
 
 const BLOCK_SIZE:usize = 1024;
 
