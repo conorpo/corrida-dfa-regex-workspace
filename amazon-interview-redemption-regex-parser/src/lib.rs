@@ -217,16 +217,16 @@ impl<'a> RegexParser<'a> {
 
 const OPERATORS: [char; 6] = ['+','?','*','|','(',')'];
 struct RegexParserNewNfa<'a> {
-    nfa: SharedRefNfa<char>,
+    nfa: NfaSupreme<char>,
     iter: Peekable<Chars<'a>>
 }
 
-type NewPattern<'a> = Option<(&'a NfaState, &'a NfaState)>;
+type NewPattern<'a> = Option<(&'a State, &'a State)>;
 
 impl<'a> RegexParserNewNfa<'a> {
     pub fn from(str: &'a str) -> Self {
         let me = Self {
-            nfa: SharedRefNfa::new(),
+            nfa: NfaSupreme::new(),
             iter: str.chars().peekable()
         };
 
@@ -235,7 +235,7 @@ impl<'a> RegexParserNewNfa<'a> {
         me
     }
 
-    pub fn parse_base(&mut self, mut cur: &'a NfaState) -> NewPattern {
+    pub fn parse_base(&mut self, mut cur: &'a State) -> NewPattern {
         // We are garunteed to be on a character or ( when starting this function
         let base_start = cur;
         //let mut term_end = self.nfa.insert_state(false);
@@ -300,7 +300,7 @@ impl<'a> RegexParserNewNfa<'a> {
         Some((term_start, term_end))
     }
 
-    pub fn parse_concat(&mut self, mut cur: &'a NfaState) -> NewPattern {
+    pub fn parse_concat(&mut self, mut cur: &'a State) -> NewPattern {
         //Parse symbols recursively, concating before providing cur node
         let concat_start = cur;
         

@@ -52,10 +52,10 @@ dependencies = [
 name = "gerber"
 version = "0.1.0"
 dependencies = [
- "bumpalo",
  "corrida",
  "hashbrown",
  "impls",
+ "smallvec",
 ]
 
 [[package]]
