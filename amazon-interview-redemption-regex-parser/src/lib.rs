@@ -3,11 +3,14 @@
 
 use core::panic;
 use std::iter::*;
+use std::ptr::NonNull;
 use std::str::Chars;
 use std::cell::LazyCell;
 use std::collections::HashSet;
 
 use gerber::*;
+use corrida::*;
+use smallvec::*;
 
 
 // Notes:
@@ -394,6 +397,84 @@ impl<'a> RegexParserNewNfa<'a> {
         }
     }
 }
+
+type Transition = (Option<char>, StateLink);
+
+enum StateLink {
+    Simple(NonNull<SimpleState>),
+    Union(NonNull<UnionState>)
+}
+
+struct SimpleState {
+    main_transition: (Option<char>, StateLink),
+    extra_epsilon: Option<NonNull<SimpleState>>
+}
+
+// TODO: Try without SmallVec
+struct UnionState {
+    transitions: SmallVec<[Transition; 4]>
+}
+
+pub struct RegexParserSupreme {
+    arena: Arena<
+}
+
+
+// struct SimpleState<'a> {
+//     main_transition: Option<StateEnum<'a>>,
+//     extra_epsilon: Option<StateEnum<'a>>
+// }
+
+// // Union states have a dynamic amount of epsilon transitions.
+// struct UnionState<'a> {
+//     transitions: Vec<StateEnum<'a>>
+// }
+
+// trait State {
+//     fn new() -> Self;
+// }
+
+// impl<'a> State for SimpleState<'a> {
+//     fn new() -> Self {
+//         Self {
+//             main_transition: None,
+//             extra_epsilon: None,
+//         }
+//     }
+// }
+
+// impl<'a> State for UnionState<'a>{
+//     fn new() -> Self {
+//         Self {
+//             transitions: Vec::new(),
+//         }
+//     }
+// }
+
+// enum StateEnum<'a> {
+//     Simple(&'a SimpleState<'a>),
+//     Union(&'a UnionState<'a>)
+// }
+
+// struct NFA {
+//     bump: Bump
+// }
+
+// impl NFA {
+//     pub fn new(size_hint_bytes: usize) -> Self {
+//         Self {
+//             bump: Bump::with_capacity(size_hint_bytes)
+//         }
+//     }
+
+//     pub fn insert_simple(&self) -> &mut SimpleState {
+//         self.bump.alloc(SimpleState::new())
+//     }
+
+//     pub fn insert_union(&self) -> &mut UnionState {
+//         self.bump.alloc(UnionState::new())
+//     }
+// }
 
 pub fn create_regex_dfa(regex_string: &str) -> Nfa<char> {
     // Easier to create it as an NFA first, then convert using Subset Construction.

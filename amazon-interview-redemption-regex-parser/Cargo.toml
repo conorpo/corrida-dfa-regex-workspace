@@ -10,3 +10,5 @@ path = "src/lib.rs"
 
 [dependencies]
 gerber = { path = "../gerber" }
+corrida = { path = "../corrida" }
+smallvec = "1.13.2"

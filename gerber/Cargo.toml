@@ -11,4 +11,5 @@ path = "src/lib.rs"
 [dependencies]
 bumpalo = "3.16.0"
 corrida = { path = "../corrida" }
+hashbrown = "0.14.5"
 impls = "1.0.3"
