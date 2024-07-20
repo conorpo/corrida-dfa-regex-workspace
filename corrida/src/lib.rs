@@ -12,7 +12,7 @@ pub mod alloc;
 pub mod toy_structures;
 
 use std::ptr::{self, NonNull};
-use std::cell::{Cell};
+use std::cell::Cell;
 
 const BLOCK_SIZE:usize = 1024;
 
@@ -145,11 +145,11 @@ impl<T> Drop for Arena<T> {
 
 #[cfg(test)]
 mod test {
-    use super::{Arena};
+    use super::Arena;
 
     #[test]
     fn test_isolated_arena() {
-        let mut arena = Arena::<u32>::new();
+        let arena = Arena::<u32>::new();
         {
             let a = arena.alloc(1);
             let b = arena.alloc(2);
@@ -167,7 +167,7 @@ mod test {
         use std::time::*;
         // Each fighter is 4*16, 64 bytes
         let start = Instant::now();
-        let mut arena = Arena::<[u32;16]>::new();
+        let arena = Arena::<[u32;16]>::new();
         for i in 0..5_000_000 {
             let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
         }

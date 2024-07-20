@@ -1,6 +1,7 @@
 //! Regex parser based on a DFA implementation
 #![feature(lazy_cell)]
 
+use core::panic;
 use std::iter::*;
 use std::str::Chars;
 use std::cell::LazyCell;
@@ -41,7 +42,7 @@ const RESERVED_CHARS: LazyCell<HashSet<char>> = LazyCell::new(|| {
 // Return index out to main constructor for error
 struct RegexParser<'a> {
     iter: Peekable<Chars<'a>>,
-    nfa: Nfa<char>,
+    nfa: &'a Nfa<char>,
     //dict_set: HashSet<char>,
 }
 
@@ -50,18 +51,13 @@ struct RegexParser<'a> {
 
 // Allow for custom allocator
 impl<'a> RegexParser<'a> {
-    fn new(str: &'a str) -> Self {
+    fn new(str: &'a str, nfa_ref: &'a Nfa<char>) -> Self {
         Self {
             iter: str.chars().peekable(),
-            nfa: Nfa::new(),
+            nfa: nfa_ref
             //dict_set:
         }
     }
-
-    // pub fn parse(&mut self, input: &str) {
-    //     //self.dict_set.reset();
-    //     // 
-    // }
 
     /// During all points in this function it has either
     /// 1 node, the empty pattern OR
@@ -115,7 +111,7 @@ impl<'a> RegexParser<'a> {
         Pattern::NonEmpty(symbol_start, symbol_end)
     }
 
-    fn parse_concat(&mut self, mut cur_node: NodeAlias<'a>)  -> Pattern<'a>{
+    fn parse_concat(&'a mut self, mut cur_node: NodeAlias<'a>)  -> Pattern<'a>{
         //Basically just parse symbols and concatenate them
         //After (, parse group takes over, then parse concat takes over
         //After |, parse concat takes over
@@ -216,7 +212,7 @@ impl<'a> RegexParser<'a> {
 
 }
 
-
+const OPERATORS: [char; 6] = ['+','?','*','|','(',')'];
 struct RegexParserNewNfa<'a> {
     nfa: SharedRefNfa<char>,
     iter: Peekable<Chars<'a>>
@@ -236,23 +232,91 @@ impl<'a> RegexParserNewNfa<'a> {
         me
     }
 
-    pub fn parse_symbol(&mut self, mut cur: &'a NfaState) -> NewPattern
+    pub fn parse_base(&mut self, mut cur: &'a NfaState) -> NewPattern {
+        // We are garunteed to be on a character or ( when starting this function
+        let base_start = cur;
+        //let mut term_end = self.nfa.insert_state(false);
+
+        let base_end = if let Some(c) = self.iter.next() {
+            match c {
+                '+' | '*' | '-' => {
+                    panic!("No base to the left of the operator.");
+                },
+                _ => {
+                
+                }
+            }
+        } else {
+            panic!("Unexpected EOF")
+        };
+
+        if let Some(c) = self.iter.next() {
+            debug_assert!(!OPERATORS.contains(&c));
+
+            match c {
+                '(' => {
+                    
+                }
+            }
+            
+            self.nfa.insert_transition(term_start, term_end, Some(c));
+        } else {
+            panic!("Unexpected EOF"); 
+        }
+
+        let mut add_skip = false;
+        let mut add_cycle = false;
+
+        while let Some(c) = self.iter.peek() {
+            match c {
+                '+' => {
+                    add_cycle = true;
+                },
+                '*' => {
+                    add_cycle = true;
+                    add_skip = true;
+                },
+                '?' => {
+                    add_skip = true;
+                },
+                _ => {
+                    break;
+                }
+            }
+            self.iter.next(); //eat
+            self.iter.next();
+        }
+
+        if add_skip {
+            self.nfa.insert_transition(term_start, term_end, None);
+        }
+        if add_cycle {
+            self.nfa.insert_transition(term_end, term_start, None);
+        }
+
+        Some((term_start, term_end))
+    }
 
     pub fn parse_concat(&mut self, mut cur: &'a NfaState) -> NewPattern {
         //Parse symbols recursively, concating before providing cur node
         let concat_start = cur;
-
-        // Ended by | or ) or EOF
-        // Doesn't eat itself
         
+        // | > term parser
+        // ( > term parser
+        // can't get back + ? *
         while let Some(c) = self.iter.peek() {
             match c {
                 '|' | ')' => {
                     break;
                 }, 
                 '(' => {
-                    match self.parse_group(cur) {
+                    //Eat it, group parser will eat closing one
+                    self.iter.next();
+
+                    match self.parse_group() {
                         Some((start, end)) => {
+                            // 1 unnecessary 
+                            self.nfa.insert_transition(cur, start, None);
                             cur = end;
                         },
                         None => {
@@ -261,12 +325,12 @@ impl<'a> RegexParserNewNfa<'a> {
                     }
                 }
                 _ => {
-                    match self.parse_symbol(cur) {
-                        Some((start, end)) {
+                    match self.parse_term(cur) {
+                        Some((start, end)) => {
                             cur = end;
                         },
                         None => {
-                            panic!("How did we get here?")
+                            panic!("How did we get here?, It was an empty pattern, how, didn't we see char?")
                         }
                     }
                     // At this point we are either at a new symbol, or | ) EOF or (
@@ -281,62 +345,54 @@ impl<'a> RegexParserNewNfa<'a> {
         Some((concat_start, cur))
     }
 
-    pub fn parse_group(&mut self, mut cur: &'a NfaState) -> (&'a NfaState, &'a NfaState) {
+    pub fn parse_group<const outermost: bool>(&mut self) -> NewPattern {
         let union_buffer: NewPattern = None;
-        let group_start = self.nfa.insert_state();
-
-        let (pattern_start, pattern_end) = (group_start, group_start);
+        let group_start = self.nfa.insert_state(false);
+        let mut cur = None;
 
         while let Some(c) = self.iter.peek() {
-            match c {
-                '(' => {
-                    let (start, end) = self.parse_group(cur);
-                    cur = end;
-                    self.iter.next(); // Eat, next char should be a )
-
-                    
-                    // Just concat, operators will be handled next time
+            match (c, outermost) {
+                ('|', _) => {
+                
                 },
-                '+' | '?' | '*' => {
-                    // Eat operators until there isn't one
-                    let mut add_skip = false;
-                    let mut add_cycle = false;
+                (')', true) => {
+                    panic!("Attempted to close a group when you were in the outermost context (no matching '(' )")
+                },
+                (')', false) => {
+                    break;
+                },
+                (c, _) => {
+                    let concat = self.parse_concat(
+                        cur.get_or_insert(self.nfa.insert_state(false))
+                    );
 
-                    self.iter.next();
-                    while let Some(c) = self.iter.peek() {
-                        match c {
-                            '+' => {
-                                add_cycle = true;
-                            },
-                            '*' => {
-                                add_cycle = true;
-                                add_skip = true;
-                            },
-                            '?' => {
-                                add_skip = true;
-                            },
-                            _ => {
-                                break;
-                            }
-                        }
-                        self.iter.next(); //eat
-                    }    
+                    // Clean this shitup
+                    let (concat_start, concat_end) = *concat.take().get_or_insert((cur.unwrap(), cur.unwrap()));
 
-                    if add_skip {
-                        self.nfa.insert_transition(pattern_start, pattern_end, None);
+                    if let Some(c) = self.iter.peek() && (c == '|' || union_buffer.is_some()) {
+                        let (union_start, union_end ) = *union_buffer.get_or_insert((Some(self.nfa.insert_state(false)),Some(self.nfa.insert_state(false)))= un);
+
+                        self.nfa.insert_transition(union_start, concat_start, None);
+                        self.nfa.insert_transition(concat_end, union_end, None);
                     }
-                    if add_cycle {
-                        self.nfa.insert_transition(pattern_end, pattern_start, None);
-                    }
+
+                    let cur = Some(concat_end);
                 }
             }
         }
 
-
-        todo!();
+        match union_buffer {
+            Some((start, end)) => Some((start,end)),
+            None => {
+                if cur.is_none() {
+                    None
+                } else {
+                    panic!("Don't think we can get here.")
+                    (cur, cur)
+                }
+            }
+        }
     }
-
-
 }
 
 pub fn create_regex_dfa(regex_string: &str) -> Nfa<char> {

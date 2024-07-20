@@ -8,6 +8,8 @@ use std::ptr::NonNull;
 use std::cell::Cell;
 use std::fmt::Display;
 
+pub mod bumpalo_attempt;
+
 use impls::impls;
 
 use corrida::*;
@@ -174,7 +176,7 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
     /// Inserts a a new vertex into the NFA, provide is_accept and transitions as a slice of tuples. 
     /// 0th element is Some symbol or none for epsilon.
     /// 1st element is a Vec of some target verts or none for a self reference.
-    pub fn alloc_node(&self, is_accept: bool, transitions: &[(Option<Σ>, &[Option<&NfaNode<Σ>>])]) -> &mut NfaNode<Σ> {
+    pub fn insert_node(&self, is_accept: bool, transitions: &[(Option<Σ>, &[Option<&NfaNode<Σ>>])]) -> &mut NfaNode<Σ> {
         let mut new_node = NfaNode::<Σ>::new(is_accept);
         new_node.append_transitions(transitions);
 
@@ -198,32 +200,41 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
 
 // TODO: Decide on the best Nfa implementation
 pub struct NfaState {
+    is_accept: bool,
     // With this method, the nodes are just keys, no point in the arena in the first place.
     // But will try implementing for posterity.
 }
 /// Nfa that provides shared references to nodes, transitions are owned by the Nfa itself.
-pub struct SharedRefNfa<Σ: Eq + core::hash::Hash + Copy + Display> {
-    arena: Arena<NfaState>,
+pub struct SharedRefNfa<'a, Σ: Eq + core::hash::Hash + Copy + Display> {
+    arena: &'a mut Arena<NfaState>,
     hashmap: HashMap<(*const NfaState, Option<Σ>), Vec<NonNull<NfaState>>>,
     starting_node: Option<NonNull<NfaState>>,
 }
 
-impl<Σ: Eq + core::hash::Hash + Copy + Display> SharedRefNfa<Σ> {
+impl<'a, Σ: Eq + core::hash::Hash + Copy + Display> SharedRefNfa<'a, Σ> {
     /// Creates a new shared ref nfa.
-    pub fn new() -> Self {
+    pub fn new(arena: &'a mut Arena<NfaState>) -> Self {
         Self {
-            arena: Arena::new(),
+            arena,
             hashmap: HashMap::new(),
             starting_node: None,
         }
     }
+    
+    /// Updates the entry point of the NFA
+    pub fn set_start_node(&mut self, target: &NfaState) {
+        self.starting_node = Some(NonNull::from(target));
+    }
 
     ///
-    pub fn insert_state(&mut self) -> &NfaState {
-        let new_state = NfaState {};
+    pub fn insert_state(&mut self, is_accept: bool) -> &NfaState {
+        let new_state = NfaState {
+            is_accept
+        };
 
         self.arena.alloc(new_state)
     }
+
 
     /// Inserts a transition into the Nfa
     pub fn insert_transition(&mut self, from: &NfaState, to: &NfaState, on: Option<Σ>) {
@@ -239,14 +250,42 @@ impl<Σ: Eq + core::hash::Hash + Copy + Display> SharedRefNfa<Σ> {
             }
         };
     }
+
+    /// Inserts several transitions based on a provied slice of target states
+    pub fn insert_transition_slice(&mut self, from: &NfaState, to: &[&NfaState], on: Option<Σ>) {
+        let key = (from as *const NfaState, on);
+
+        let vec: Vec<NonNull<NfaState>> = to.into_iter().map(|&shared_ref| {
+            NonNull::from(shared_ref)
+        }).collect();
+
+        match self.hashmap.get_mut(&key) {
+            Some(existing) => {
+
+                existing.extend(vec)
+            },
+            None => {
+                self.hashmap.insert(key, vec);
+            }
+        };
+    }
+
+    /// Converts this NFA into a DFA using subset construction.
+    pub fn into_dfa(self) -> Dfa<Σ> {
+        todo!();
+    }
 }
 
 
 
 
 #[cfg(test)]
-mod test{
+mod test {
     //use crate::DfaVertex;
+
+    use corrida::Arena;
+
+    use crate::{NfaState, SharedRefNfa};
 
     //use super::Vertex;
     use super::{Dfa, Nfa, NfaNode, DfaVertex};
@@ -342,37 +381,34 @@ mod test{
 
     #[test]
     fn test_nfa() {
-        let nfa = Nfa::<char>::new();
+        let mut arena = Arena::<NfaState>::new();
+        let mut nfa = SharedRefNfa::<char>::new(&mut arena);
 
         {
+            let s_0 = nfa.insert_state(true);
 
-            let s_0 = nfa.alloc_node(true, &[]);
+            let s_1 = nfa.insert_state(false);
+            let s_3 = nfa.insert_state(false);
 
-            let s_1 = nfa.alloc_node(false, &[]);
-            let s_3 = nfa.alloc_node(false, &[]);
+            nfa.insert_transition(s_0, s_1, Some('a'));
+            nfa.insert_transition(s_0, s_3, Some('a'));
 
-            s_0.append_transitions(&[(Some('a'), &[Some(s_1),Some(s_3)])]);
+            let s_2 = nfa.insert_state(true);
+            nfa.insert_transition(s_1, s_2, Some('b'));
 
-            let s_2 = nfa.alloc_node(true, &[]);
-            s_1.append_transitions(&[(Some('b'),&[Some(s_2)])]);
+            let s_4 = nfa.insert_state(false);
+            let s_5 = nfa.insert_state(false);
+            let s_6 = nfa.insert_state(true);
+            let s_7 = nfa.insert_state(true);
 
-            let s_4 = nfa.alloc_node(false, &[]);
-            let s_5 = nfa.alloc_node(false, &[]);
-            let s_6 = nfa.alloc_node(true, &[]);
-            let s_7 = nfa.alloc_node(true, &[]);
-        
-            s_3.append_transitions(&[(None, &[Some(s_4), Some(s_5)])]);
+            nfa.insert_transition_slice(s_3, &[s_4, s_5], None);
 
-            s_4.append_transitions(&[(Some('d'), &[Some(s_6)])]);
-            s_5.append_transitions(&[(Some('c'), &[Some(s_7)])]);
+            nfa.insert_transition(s_4, s_6, Some('d'));
+            nfa.insert_transition(s_5, s_7, Some('c'));
 
             nfa.set_start_node(s_0);
         }
     }
 
 
-    #[test]
-    fn test_unpin() {
-        assert!(impls::impls!(NfaVertex<char>: Unpin));
-    }
 }
