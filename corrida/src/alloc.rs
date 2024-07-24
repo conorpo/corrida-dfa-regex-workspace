@@ -3,6 +3,7 @@
 
 use std::alloc::{Layout, alloc, AllocError, Allocator};
 use std::cell::Cell;
+use std::rc::Rc;
 use std::{mem, ptr, slice};
 use std::ptr::{NonNull, from_raw_parts_mut};
 
@@ -36,6 +37,8 @@ impl Block {
     }
 }
 
+#[derive(Clone)]
+
 
 pub struct ArenaAllocator {
     cur_block: Cell<NonNull<Block>>,
@@ -47,16 +50,14 @@ impl ArenaAllocator {
     pub fn new() -> Self {
         let block_non_null = Block::new(None);
 
-        unsafe {
-            Self {
+        Self  {
                 cur_block: Cell::new(block_non_null),
                 cur_index: Cell::new(0)
             }
-        }
     }
 }
 
-unsafe impl Allocator for ArenaAllocator {
+unsafe impl Allocator for &ArenaAllocator {
     fn allocate(&self, layout: Layout<>) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
             // Update cur block and index if needed
@@ -84,8 +85,25 @@ unsafe impl Allocator for ArenaAllocator {
     }
 }
 
-pub struct NfaTest {
+pub struct NfaTest<'a> {
+    arena: &'a ArenaAllocator
+}
 
+pub struct NfaVertex {
+}
+
+impl<'a> NfaTest<'a> {
+    pub fn new(arena: &'a ArenaAllocator) -> Self {
+        Self {
+            arena
+        }
+    }
+
+    pub fn insert_vertex(&mut self) -> Box<NfaVertex, &ArenaAllocator> {
+        unsafe {
+            Box::new_in(NfaVertex {}, self.arena)
+        }
+    }
 }
 
 mod test {
@@ -107,15 +125,10 @@ mod test {
     fn test() {
         use std::pin::Pin;
 
-        let my_alloc = ArenaAllocator::new();
+        let arena = ArenaAllocator::new();
+        let mut nfa = NfaTest::new(&arena);
 
-        let mut my_ele = Box::new_in(TestFighter::new(), &my_alloc);
-        
-        let mut second_ele_ele = Box::new_in(TestFighter::new(), &my_alloc);
-
-        second_ele_ele.child = Some(my_ele.);
-
-        my_ele.child = None;
-        
+        let a = nfa.insert_vertex();
+        let b = nfa.insert_vertex();
     }
 }
