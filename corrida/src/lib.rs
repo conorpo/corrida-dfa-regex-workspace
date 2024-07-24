@@ -2,6 +2,9 @@
 #![feature(ptr_metadata)]
 #![feature(non_null_convenience)]
 #![warn(missing_docs)]
+#![feature(cell_update)]
+#![feature(slice_from_ptr_range)]
+#![feature(adt_const_params)]
 //#![feature(allocate_api)]
 
 //! Typed Bump Allocator
