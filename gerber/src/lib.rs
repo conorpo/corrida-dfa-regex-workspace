@@ -2,19 +2,24 @@
 
 //! A simple DFA library to construct state machines, fast allocation using an a custom Arena implementation, and safe construction using Rust's borrow checker.
 
-use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::ptr::NonNull;
 use std::cell::Cell;
 use std::fmt::Display;
 
-use impls::impls;
+
+
+use hashbrown::hash_map::{Entry, OccupiedEntry};
+use hashbrown::HashMap;
+use smallvec::*;
+
 
 use corrida::*;
 
 type VertexLink<Σ> = NonNull<DfaVertex<Σ>>;
 
 /// A node in the DFA, contains is_accept and a transition hashmap.
-pub struct DfaVertex<Σ: Eq + core::hash::Hash + Copy + Display> {
+pub struct DfaVertex<Σ: Eq + Hash + Copy> {
     transitions: HashMap<Σ, VertexLink<Σ>>,
     is_accept: bool
 }
@@ -22,13 +27,13 @@ pub struct DfaVertex<Σ: Eq + core::hash::Hash + Copy + Display> {
 
 /// Provides an API for construction and simulation of a DFA structure. 
 /// Symbol type Σ must be hashable and implement display (not asking for alot here..)
-pub struct Dfa<Σ: Eq + core::hash::Hash + Copy + Display> {
+pub struct Dfa<Σ: Eq + Hash + Copy> {
     arena: Arena<DfaVertex<Σ>>,
     start_node: Cell<Option<VertexLink<Σ>>>
 }
 
 
-impl<Σ:Eq + core::hash::Hash + Copy + Display> DfaVertex<Σ> {
+impl<Σ:Eq + Hash + Copy> DfaVertex<Σ> {
     fn new(accept: bool) -> Self {
         Self {
             transitions: HashMap::new(),
@@ -59,7 +64,7 @@ impl<Σ:Eq + core::hash::Hash + Copy + Display> DfaVertex<Σ> {
     }
 }
 
-impl<Σ:Eq + core::hash::Hash + Copy + Display> Dfa<Σ> {
+impl<Σ:Eq + Hash + Copy> Dfa<Σ> {
     /// Creates a new DFA with no vertices, but an Arena ready for pushing verts.
     pub fn new() -> Self {
         Self {
@@ -111,86 +116,88 @@ impl<Σ:Eq + core::hash::Hash + Copy + Display> Dfa<Σ> {
 }
 
 /// A node in the Nfa, transitions are stored as a hashmap to a vec of target ptrs. At what point do we have too much indirections?
-pub struct NfaNode<Σ: Eq + core::hash::Hash + Copy + Display > {
-    transitions: HashMap<Option<Σ>, HashSet<NonNull<NfaNode<Σ>>>>,
+struct State<Σ: Eq + Hash> {
     is_accept: bool,
+    transitions: HashMap<
+        Option<Σ>, Vec<NonNull<State<Σ>>>, // TODO: CHANGE HASH,  CHANGE ALOCATOR
+    >,
 }
 
-// Can't have duplicates, Maybe use Unionto merge to existing sets, is HashMap<HashSet<>> for each vertex worth it?
-impl<Σ: Eq + core::hash::Hash + Copy + Display> NfaNode<Σ> {
-    /// Appends provided transition slice to vertex transitions. Provide transitions as tuple
-    /// 0th element is Some symbol, or None for an epsilon transition
-    /// 1st element is Some target vert (reference), or None for a self transition.
-    pub fn append_transitions(&mut self, transitions: &[(Option<Σ>, &[Option<&NfaNode<Σ>>])]) {
-        for (symbol, targets) in transitions {
-            let mut transitions_hashset = HashSet::new();
-
-            targets.into_iter().map(|target_ref| {
-                let target_ref = target_ref.or(Some(self)).unwrap();
-                NonNull::new(target_ref as *const NfaNode<Σ> as *mut NfaNode<Σ>).unwrap()
-            }).for_each(|target_ptr| {
-                transitions_hashset.insert(target_ptr);
-            });
-
-            if let Some(existing_set) = self.transitions.get_mut(symbol) {
-                existing_set.extend(transitions_hashset);
-            } else {
-                self.transitions.insert(*symbol, transitions_hashset);
-            }
-        }
-    }
-
-    /// Creates a new NFA vertex, used internally, does not allocate to the arena itself.
-    fn new(is_accept: bool) -> Self {
+impl<Σ: Eq + Hash> State<Σ> {
+    pub fn new() -> Self {
         Self {
-            transitions: HashMap::new(),
-            is_accept
+            is_accept: false,
+            transitions: HashMap::new()
         }
     }
 
-    /// Updates the `is_accept` state of the vertex.
-    pub fn set_accept(&mut self, is_accept: bool) {
-        self.is_accept = is_accept;
+    /// Add just one transition
+    pub fn push_transition(&mut self, on: Option<Σ>, to: &State<Σ>) {
+        // SAFETY
+        // State Reference is garunteed to be a valid reference to a State
+        // We are only using NonNulls for niche optimizations, Nfa won't ever need to mutate after transitioning.
+        let ptr = unsafe {
+            NonNull::new_unchecked(
+                to as *const State<Σ> as *mut State<Σ>
+            )
+        };
+
+        // How to prevent duplicate transitions on this one?
+        match self.transitions.entry(on) {
+            Entry::Occupied(existing) => {
+                existing.into_mut().push(ptr);
+            },
+            Entry::Vacant(slot) => {
+                slot.insert(vec![ptr]);
+            }
+        }    
+
+    }
+
+    /// Think about good way to do tihs.
+    pub fn push_transitions<'a>(&mut self, input: &[(Option<Σ>, &State<Σ>)])
+    where
+        Σ: 'a + Copy 
+    {
+        let input_slice: &[(Option<Σ>, &State<Σ>)] = input.into();
+
+        for transition in input_slice {
+            self.push_transition(transition.0, transition.1)
+        }
     }
 }
 
-/// Provides an API for construction of an NFA. 
-/// Symbol type Σ must be hashable and implement display. 
-pub struct Nfa<Σ: Eq + core::hash::Hash + Copy + Display> {
-    arena: Arena<NfaNode<Σ>>,
-    start_node: Cell<Option<NonNull<NfaNode<Σ>>>>
+
+/// Nfa that provides shared references to nodes, transitions are owned by the Nfa itself.
+// TODO: This could use typed allocator, or could use the generic allocator version
+pub struct NfaSupreme<Σ: Eq + Hash> {
+    arena: Arena<State<Σ>>,
+    starting_node: Cell<Option<NonNull<State<Σ>>>>,
 }
 
-impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
-    /// Creates a new Nfa with no vertices, but an arena block ready for allocation
-    pub fn new () -> Self {
+impl<Σ: Eq + Hash> NfaSupreme<Σ> {
+    /// Creates a new shared ref nfa.
+    pub fn new() -> Self {
         Self {
             arena: Arena::new(),
-            start_node: Cell::new(None)
+            starting_node: Cell::new(None),
         }
     }
-
-    /// Inserts a a new vertex into the NFA, provide is_accept and transitions as a slice of tuples. 
-    /// 0th element is Some symbol or none for epsilon.
-    /// 1st element is a Vec of some target verts or none for a self reference.
-    pub fn alloc_node(&self, is_accept: bool, transitions: &[(Option<Σ>, &[Option<&NfaNode<Σ>>])]) -> &mut NfaNode<Σ> {
-        let mut new_node = NfaNode::<Σ>::new(is_accept);
-        new_node.append_transitions(transitions);
-
-        let slot = self.arena.alloc(new_node);
-        slot
+    
+    /// Updates the entry point of the NFA
+    pub fn set_start_node(&self, target: &State<Σ>) {
+        self.starting_node.set(Some(NonNull::from(target)));
     }
 
-    /// Updates the start node of the Nfa.
-    pub fn set_start_node(&self, start_node: &NfaNode<Σ>) {
-        self.start_node.set(Some({
-            NonNull::new(start_node as *const NfaNode<Σ> as *mut NfaNode<Σ>).unwrap()
-        }));
+    /// 
+    pub fn insert_state(&self) -> &mut State<Σ> {
+        self.arena.alloc(State::new())
     }
-
-    /// Turns our NFA into a DFA using subset construction.
-    pub fn to_dfa(&self) -> Dfa<Σ> {
-
+    /// Converts this NFA into a DFA using subset construction.
+    pub fn into_dfa(self) -> Dfa<Σ> 
+    where
+        Σ: Copy
+    {
         todo!();
     }
 }
@@ -199,11 +206,13 @@ impl <Σ: Eq + core::hash::Hash + Copy + Display> Nfa<Σ> {
 
 
 #[cfg(test)]
-mod test{
+mod test {
     //use crate::DfaVertex;
 
+    use corrida::Arena;
+
     //use super::Vertex;
-    use super::{Dfa, Nfa, NfaNode, DfaVertex};
+    use super::{Dfa, State, NfaSupreme, DfaVertex};
 
     #[test]
     pub fn test_basics() {
@@ -296,37 +305,36 @@ mod test{
 
     #[test]
     fn test_nfa() {
-        let nfa = Nfa::<char>::new();
+        let mut arena = Arena::<State<char>>::new();
+        let mut nfa = NfaSupreme::<char>::new();
 
         {
+            let s_0 = nfa.insert_state();
 
-            let s_0 = nfa.alloc_node(true, &[]);
+            let s_1 = nfa.insert_state();
+            let s_3 = nfa.insert_state();
 
-            let s_1 = nfa.alloc_node(false, &[]);
-            let s_3 = nfa.alloc_node(false, &[]);
+            s_0.push_transition(Some('a'), s_1);
+            s_0.push_transition(Some('a'), s_3);
 
-            s_0.append_transitions(&[(Some('a'), &[Some(s_1),Some(s_3)])]);
+            let s_2 = nfa.insert_state();
+            s_1.push_transition(Some('b'), s_2);
 
-            let s_2 = nfa.alloc_node(true, &[]);
-            s_1.append_transitions(&[(Some('b'),&[Some(s_2)])]);
+            let s_4 = nfa.insert_state();
+            let s_5 = nfa.insert_state();
+            let s_6 = nfa.insert_state();
+            let s_7 = nfa.insert_state();
 
-            let s_4 = nfa.alloc_node(false, &[]);
-            let s_5 = nfa.alloc_node(false, &[]);
-            let s_6 = nfa.alloc_node(true, &[]);
-            let s_7 = nfa.alloc_node(true, &[]);
-        
-            s_3.append_transitions(&[(None, &[Some(s_4), Some(s_5)])]);
+            s_3.push_transitions(&[(None, s_4),(None, s_5)]);
 
-            s_4.append_transitions(&[(Some('d'), &[Some(s_6)])]);
-            s_5.append_transitions(&[(Some('c'), &[Some(s_7)])]);
+            s_4.push_transition(Some('d'), s_6);
+            s_5.push_transition(Some('c'), s_7);
 
             nfa.set_start_node(s_0);
         }
+
+        let dfa = nfa.into_dfa();
     }
 
 
-    #[test]
-    fn test_unpin() {
-        assert!(impls::impls!(NfaVertex<char>: Unpin));
-    }
 }

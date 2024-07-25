@@ -1,12 +1,16 @@
 //! Regex parser based on a DFA implementation
 #![feature(lazy_cell)]
 
+use core::panic;
 use std::iter::*;
+use std::ptr::NonNull;
 use std::str::Chars;
 use std::cell::LazyCell;
 use std::collections::HashSet;
 
 use gerber::*;
+use corrida::*;
+use smallvec::*;
 
 
 // Notes:
@@ -17,9 +21,9 @@ use gerber::*;
 
 
 // To avoid option hell or having to delete and merge nodes, introduce a shared mutable reference
-type NodeAlias<'a> = &'a mut NfaVertex<char>;
+type NodeAlias<'a> = &'a mut NfaNode<char>;
 
-// const DUMMY_REF: OnceCell::<NfaVertex<char>> = OnceCell::new();
+// const DUMMY_REF: OnceCell::<NfaNode<char>> = OnceCell::new();
 enum Pattern<'a> {
     NonEmpty(NodeAlias<'a>, NodeAlias<'a>),
     Empty(NodeAlias<'a>)
@@ -41,7 +45,7 @@ const RESERVED_CHARS: LazyCell<HashSet<char>> = LazyCell::new(|| {
 // Return index out to main constructor for error
 struct RegexParser<'a> {
     iter: Peekable<Chars<'a>>,
-    nfa: Nfa<char>,
+    nfa: &'a Nfa<char>,
     //dict_set: HashSet<char>,
 }
 
@@ -50,18 +54,13 @@ struct RegexParser<'a> {
 
 // Allow for custom allocator
 impl<'a> RegexParser<'a> {
-    fn new(str: &'a str) -> Self {
+    fn new(str: &'a str, nfa_ref: &'a Nfa<char>) -> Self {
         Self {
             iter: str.chars().peekable(),
-            nfa: Nfa::new(),
+            nfa: nfa_ref
             //dict_set:
         }
     }
-
-    // pub fn parse(&mut self, input: &str) {
-    //     //self.dict_set.reset();
-    //     // 
-    // }
 
     /// During all points in this function it has either
     /// 1 node, the empty pattern OR
@@ -115,7 +114,7 @@ impl<'a> RegexParser<'a> {
         Pattern::NonEmpty(symbol_start, symbol_end)
     }
 
-    fn parse_concat(&mut self, mut cur_node: NodeAlias<'a>)  -> Pattern<'a>{
+    fn parse_concat(&'a mut self, mut cur_node: NodeAlias<'a>)  -> Pattern<'a>{
         //Basically just parse symbols and concatenate them
         //After (, parse group takes over, then parse concat takes over
         //After |, parse concat takes over
@@ -215,6 +214,268 @@ impl<'a> RegexParser<'a> {
     }
 
 }
+
+const OPERATORS: [char; 6] = ['+','?','*','|','(',')'];
+struct RegexParserNewNfa<'a> {
+    nfa: NfaSupreme<char>,
+    iter: Peekable<Chars<'a>>
+}
+
+type NewPattern<'a> = Option<(&'a State, &'a State)>;
+
+impl<'a> RegexParserNewNfa<'a> {
+    pub fn from(str: &'a str) -> Self {
+        let me = Self {
+            nfa: NfaSupreme::new(),
+            iter: str.chars().peekable()
+        };
+
+        me.parse_group();
+
+        me
+    }
+
+    pub fn parse_base(&mut self, mut cur: &'a State) -> NewPattern {
+        // We are garunteed to be on a character or ( when starting this function
+        let base_start = cur;
+        //let mut term_end = self.nfa.insert_state(false);
+
+        let base_end = if let Some(c) = self.iter.next() {
+            match c {
+                '+' | '*' | '-' => {
+                    panic!("No base to the left of the operator.");
+                },
+                _ => {
+                
+                }
+            }
+        } else {
+            panic!("Unexpected EOF")
+        };
+
+        if let Some(c) = self.iter.next() {
+            debug_assert!(!OPERATORS.contains(&c));
+
+            match c {
+                '(' => {
+                    
+                }
+            }
+            
+            self.nfa.insert_transition(term_start, term_end, Some(c));
+        } else {
+            panic!("Unexpected EOF"); 
+        }
+
+        let mut add_skip = false;
+        let mut add_cycle = false;
+
+        while let Some(c) = self.iter.peek() {
+            match c {
+                '+' => {
+                    add_cycle = true;
+                },
+                '*' => {
+                    add_cycle = true;
+                    add_skip = true;
+                },
+                '?' => {
+                    add_skip = true;
+                },
+                _ => {
+                    break;
+                }
+            }
+            self.iter.next(); //eat
+            self.iter.next();
+        }
+
+        if add_skip {
+            self.nfa.insert_transition(term_start, term_end, None);
+        }
+        if add_cycle {
+            self.nfa.insert_transition(term_end, term_start, None);
+        }
+
+        Some((term_start, term_end))
+    }
+
+    pub fn parse_concat(&mut self, mut cur: &'a State) -> NewPattern {
+        //Parse symbols recursively, concating before providing cur node
+        let concat_start = cur;
+        
+        // | > term parser
+        // ( > term parser
+        // can't get back + ? *
+        while let Some(c) = self.iter.peek() {
+            match c {
+                '|' | ')' => {
+                    break;
+                }, 
+                '(' => {
+                    //Eat it, group parser will eat closing one
+                    self.iter.next();
+
+                    match self.parse_group() {
+                        Some((start, end)) => {
+                            // 1 unnecessary 
+                            self.nfa.insert_transition(cur, start, None);
+                            cur = end;
+                        },
+                        None => {
+                            //It was empty pattern, nothing to concat
+                        }
+                    }
+                }
+                _ => {
+                    match self.parse_term(cur) {
+                        Some((start, end)) => {
+                            cur = end;
+                        },
+                        None => {
+                            panic!("How did we get here?, It was an empty pattern, how, didn't we see char?")
+                        }
+                    }
+                    // At this point we are either at a new symbol, or | ) EOF or (
+                }
+            }
+        }
+
+        if concat_start == cur {
+            return None;
+        }
+
+        Some((concat_start, cur))
+    }
+
+    pub fn parse_group<const outermost: bool>(&mut self) -> NewPattern {
+        let union_buffer: NewPattern = None;
+        let group_start = self.nfa.insert_state(false);
+        let mut cur = None;
+
+        while let Some(c) = self.iter.peek() {
+            match (c, outermost) {
+                ('|', _) => {
+                
+                },
+                (')', true) => {
+                    panic!("Attempted to close a group when you were in the outermost context (no matching '(' )")
+                },
+                (')', false) => {
+                    break;
+                },
+                (c, _) => {
+                    let concat = self.parse_concat(
+                        cur.get_or_insert(self.nfa.insert_state(false))
+                    );
+
+                    // Clean this shitup
+                    let (concat_start, concat_end) = *concat.take().get_or_insert((cur.unwrap(), cur.unwrap()));
+
+                    if let Some(c) = self.iter.peek() && (c == '|' || union_buffer.is_some()) {
+                        let (union_start, union_end ) = *union_buffer.get_or_insert((Some(self.nfa.insert_state(false)),Some(self.nfa.insert_state(false)))= un);
+
+                        self.nfa.insert_transition(union_start, concat_start, None);
+                        self.nfa.insert_transition(concat_end, union_end, None);
+                    }
+
+                    let cur = Some(concat_end);
+                }
+            }
+        }
+
+        match union_buffer {
+            Some((start, end)) => Some((start,end)),
+            None => {
+                if cur.is_none() {
+                    None
+                } else {
+                    panic!("Don't think we can get here.")
+                    (cur, cur)
+                }
+            }
+        }
+    }
+}
+
+type Transition = (Option<char>, StateLink);
+
+enum StateLink {
+    Simple(NonNull<SimpleState>),
+    Union(NonNull<UnionState>)
+}
+
+struct SimpleState {
+    main_transition: Option<(Option<char>, StateLink)>,
+    extra_epsilon: Option<NonNull<SimpleState>>
+}
+
+// TODO: Try without SmallVec
+struct UnionState {
+    transitions: SmallVec<[Transition; 4]>
+}
+
+pub struct RegexParserSupreme {
+    simple_state_arena: Arena<SimpleState>,
+    union_state_arena: Arena<SimpleState>,
+}
+
+
+// struct SimpleState<'a> {
+//     main_transition: Option<StateEnum<'a>>,
+//     extra_epsilon: Option<StateEnum<'a>>
+// }
+
+// // Union states have a dynamic amount of epsilon transitions.
+// struct UnionState<'a> {
+//     transitions: Vec<StateEnum<'a>>
+// }
+
+// trait State {
+//     fn new() -> Self;
+// }
+
+// impl<'a> State for SimpleState<'a> {
+//     fn new() -> Self {
+//         Self {
+//             main_transition: None,
+//             extra_epsilon: None,
+//         }
+//     }
+// }
+
+// impl<'a> State for UnionState<'a>{
+//     fn new() -> Self {
+//         Self {
+//             transitions: Vec::new(),
+//         }
+//     }
+// }
+
+// enum StateEnum<'a> {
+//     Simple(&'a SimpleState<'a>),
+//     Union(&'a UnionState<'a>)
+// }
+
+// struct NFA {
+//     bump: Bump
+// }
+
+// impl NFA {
+//     pub fn new(size_hint_bytes: usize) -> Self {
+//         Self {
+//             bump: Bump::with_capacity(size_hint_bytes)
+//         }
+//     }
+
+//     pub fn insert_simple(&self) -> &mut SimpleState {
+//         self.bump.alloc(SimpleState::new())
+//     }
+
+//     pub fn insert_union(&self) -> &mut UnionState {
+//         self.bump.alloc(UnionState::new())
+//     }
+// }
 
 pub fn create_regex_dfa(regex_string: &str) -> Nfa<char> {
     // Easier to create it as an NFA first, then convert using Subset Construction.

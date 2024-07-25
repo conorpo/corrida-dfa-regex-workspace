@@ -1,31 +1,33 @@
-#![feature(allocator_api)]
-#![feature(ptr_metadata)]
-#![feature(non_null_convenience)]
 #![warn(missing_docs)]
-#![feature(cell_update)]
-#![feature(slice_from_ptr_range)]
+#![feature(allocator_api)]
+#![feature(generic_const_exprs)]
+#![feature(const_trait_impl)]
+#![feature(inline_const)]
 #![feature(adt_const_params)]
 //#![feature(allocate_api)]
 
 //! Typed Bump Allocator
 //! 
 //! - Useful as for cache-friendly accesses of collection.
+//! 
 
-pub mod alloc;
+pub mod r#final;
+
 pub mod toy_structures;
 
 use std::ptr::{self, NonNull};
-use std::cell::{Cell};
-
-const BLOCK_SIZE:usize = 1024;
+use std::cell::Cell;
 
 type BlockLink<F> = Option<NonNull<Block<F>>>;
-struct Block<T> {
-    prev: BlockLink<T>,
-    data: Vec<T>
+struct Block<F> {
+    prev: BlockLink<F>,
+    data: Vec<F>
 }
 
+const BLOCK_SIZE: usize = 1024;
+
 impl<T> Block<T> {
+
     fn new(prev: BlockLink<T>) -> Self {
         Self {
             prev,
@@ -107,29 +109,6 @@ impl<'a, T> Arena<T> {
 
         slot
     }
-
-    // pub fn iter(&mut self) -> Iter<'_, T> {
-    //     if self.is_empty() {
-    //         Iter {
-    //             front: None,
-    //             back: None,
-    //             len: 0,
-    //             _boo: PhantomData
-    //         }
-    //     } else {
-
-
-
-    //         Iter {
-    //             front
-    //         }
-    //     }
-
-    //     Iter::<'_, T> {
-    //         front: 
-    //     }
-    //}
-
 }
 
 impl<T> Drop for Arena<T> {
@@ -148,11 +127,11 @@ impl<T> Drop for Arena<T> {
 
 #[cfg(test)]
 mod test {
-    use super::{Arena};
+    use super::Arena;
 
     #[test]
     fn test_isolated_arena() {
-        let mut arena = Arena::<u32>::new();
+        let arena = Arena::<u32>::new();
         {
             let a = arena.alloc(1);
             let b = arena.alloc(2);
@@ -170,7 +149,7 @@ mod test {
         use std::time::*;
         // Each fighter is 4*16, 64 bytes
         let start = Instant::now();
-        let mut arena = Arena::<[u32;16]>::new();
+        let arena = Arena::<[u32;16]>::new();
         for i in 0..5_000_000 {
             let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
         }
@@ -178,8 +157,4 @@ mod test {
         assert!(start.elapsed() < Duration::from_millis(500))
     }
 
-}
-
-mod benchmark {
-    
 }

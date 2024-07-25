@@ -59,7 +59,7 @@ pub mod binary_tree {
             for i in 0..1_000_000 {
                 let mut cur = tree.insert_node();
                 let child = tree.insert_node();
-                cur.set_right(child);
+                //cur.set_right(child);
                 cur = child;
             }
         }

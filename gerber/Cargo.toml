@@ -10,4 +10,6 @@ path = "src/lib.rs"
 
 [dependencies]
 corrida = { path = "../corrida" }
+hashbrown = "0.14.5"
 impls = "1.0.3"
+smallvec = "1.13.2"
