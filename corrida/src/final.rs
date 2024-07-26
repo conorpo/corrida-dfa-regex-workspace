@@ -1,28 +1,58 @@
-use std::{alloc::{AllocError, Allocator, Global, GlobalAlloc, Layout}, cell::Cell, marker::{PhantomData, PhantomPinned}, mem::{self, MaybeUninit}, ops::Index, ptr::NonNull, slice::{self, from_raw_parts_mut}};
+use std::{alloc::{AllocError, Allocator, Global, GlobalAlloc, Layout}, cell::{Cell, UnsafeCell}, intrinsics::size_of, marker::{PhantomData, PhantomPinned}, mem::{self, MaybeUninit}, ops::Index, ptr::NonNull, slice::{self, from_mut_ptr_range, from_raw_parts_mut}, sync::atomic::{AtomicI32, AtomicU32, Ordering}};
 
 enum Assert<const CHECK: bool> {}
 trait IsTrue {}
 impl IsTrue for Assert<true> {}
 
+static block_count: AtomicU32 = AtomicU32::new(0);
+
+#[repr(align(256))]
 struct Block
-{
-    data:[u8; BLOCK_DATA_SIZE],
-    prev: Option<Box<Block>>
+{   
+    prev: Option<Box<Block>>,
+    cur_ptr: NonNull<u8>
 }
 
-const BLOCK_DATA_SIZE: usize = 8192;
+const BLOCK_DATA_SIZE: usize = 1 << 20;
 
 impl Block
 {
-    fn new(prev: Option<Box<Block>>) -> Box<Block> {
+    const LAYOUT: Layout = unsafe { 
+        Layout::from_size_align_unchecked(BLOCK_DATA_SIZE + size_of::<Self>(), 256)
+    };
+    fn new(prev: Option<Box<Block>>) -> NonNull<Self> {
         //SAFETY, we are about to immedieatly initialize prev, data will always be initalized
-        let mut new_block = unsafe { 
-            println!("BLOCK");
-            Box::<Block>::new_uninit().assume_init()
-        };
+        println!("NEW_BLOCK");
 
-        new_block.prev = prev;
-        new_block
+        unsafe {
+            let ptr = (Global {}).allocate(Self::LAYOUT).expect("Failed to allocate").as_mut_ptr();
+            
+            let footer = {
+                NonNull::new_unchecked(ptr.add(BLOCK_DATA_SIZE) as *mut Self)
+            };
+
+            footer.write (Block {
+                prev,
+                cur_ptr: NonNull::new_unchecked(ptr)
+            });
+
+            footer
+        }
+    }
+
+    fn alloc(&mut self, layout: Layout) -> Result<&mut [u8], AllocError> {
+        unsafe {
+            let align_offset = self.cur_ptr.align_offset(layout.align());
+            let actual_size = layout.size() + layout.size() % layout.align();
+            
+            if self.cur_ptr.add(align_offset + actual_size).as_ptr() as *const u8 > (self as *const Block as *const u8) {
+                Err(AllocError)
+            } else {
+                let slot_ptr = self.cur_ptr.add(align_offset);
+                self.cur_ptr = slot_ptr.add(actual_size);
+                Ok(from_raw_parts_mut(slot_ptr.as_ptr(), actual_size))
+            }
+        }
     }
 }
 
@@ -33,7 +63,7 @@ impl Block
 pub struct Corrida 
 where
 {
-    arena: Cell<Option<Box<Block>>>,
+    cur_block: Cell<NonNull<Block>>,
     cur_offset: Cell<usize>,
     _boo: PhantomData<Block>
 }
@@ -44,40 +74,55 @@ impl Corrida
 {
     pub fn new() -> Self {
         Self {
-            arena:Cell::new(Some(Block::new(None))),
+            cur_block: Cell::new(Block::new(None)),
             cur_offset: Cell::new(0),
             _boo: PhantomData
         }
     }
 
+    fn alloc_block(&self) {
+        
+    }
+
     pub fn alloc<F>(&self, fighter: F) -> &mut F
     {
-        let mut cur_offset = self.cur_offset.get();
+        //let mut cur_offset = self.cur_offset.get();
+        let layout: Layout = Layout::new::<F>();
+        
+        unsafe {
+            // SAFETY
+            // self.cur_block will always have a valid pointer to a Block
+            let mut slot = match (*self.cur_block.get().as_ptr()).alloc(layout) {
+                Ok(slot) => {
+                    slot
+                },
+                Err(_) => {
+                    let old_block = Box::from_raw(self.cur_block.get().as_ptr());
+                    let mut new_block = Block::new(Some(old_block));
 
-        let mut block = if cur_offset + size_of::<F>() > BLOCK_DATA_SIZE {
-            let old = self.arena.take().unwrap();
-            cur_offset = 0;
-            
-            Block::new(Some(old))   
-        } else {
-            self.arena.take().unwrap()
-        };
+                    let old = block_count.fetch_add(1, Ordering::Relaxed);
+                    if old % 10 == 0 {
+                        println!("{old} BLOCKS");
+                    }
 
-        // SAFETY: We are creating a reference to unintialized memory, but we are instantly initializing it.
-        // We are also incrementing current offset to make sure we dont reallocate memory.
-        let slot = unsafe { &mut *(block.data.as_mut_ptr().add(cur_offset) as *mut F) };
-        *slot = fighter;
+                    self.cur_block.set(new_block);
+                    new_block.as_mut().alloc(layout).unwrap()
+                }
+            };
 
-        self.cur_offset.set(cur_offset + size_of::<F>());
-        self.arena.set(Some(block));
+            let slot = slot.as_mut_ptr() as *mut F;
+            slot.write(fighter);
+            &mut *slot
+        }
 
-        slot
     }
 }
 
 
 #[cfg(test)]
 mod test {
+    use std::time::{Duration, Instant};
+
     use super::Corrida;
 
     #[test]
@@ -100,11 +145,25 @@ mod test {
         // Each fighter is 4*16, 64 bytes
         let start = Instant::now();
         let arena = Corrida::new();
-        for i in 0..5_000_000 {
-            if i % 1_000_000 == 0 {
+        for i in 0..10_000 {
+            if i % 1000 == 0 {
                 println!("{i}");
             }
             let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
+        }
+        dbg!(start.elapsed());
+        assert!(start.elapsed() < Duration::from_millis(500))
+    }
+
+    #[test]
+    fn test_large2() {
+        let start = Instant::now();
+        let arena = Corrida::new();
+        for i in 0..5_000_000 {
+            let _my_ref = Box::new([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
+            unsafe {
+                Box::into_raw(_my_ref);
+            }
         }
         dbg!(start.elapsed());
         assert!(start.elapsed() < Duration::from_millis(500))

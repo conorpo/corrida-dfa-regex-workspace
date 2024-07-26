@@ -8,6 +8,12 @@
 #![feature(adt_const_params)]
 #![feature(new_uninit)]
 #![feature(cell_update)]
+#![feature(maybe_uninit_as_bytes)]
+#![feature(core_intrinsics)]
+#![feature(maybe_uninit_fill)]
+#![feature(maybe_uninit_uninit_array)]
+#![feature(slice_from_ptr_range)]
+#![feature(alloc_layout_extra)]
 //#![feature(allocate_api)]
 
 //! Typed Bump Allocator
