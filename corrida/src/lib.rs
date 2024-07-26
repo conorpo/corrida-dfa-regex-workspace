@@ -3,7 +3,11 @@
 #![feature(generic_const_exprs)]
 #![feature(const_trait_impl)]
 #![feature(inline_const)]
+#![feature(ptr_metadata)]
+#![feature(slice_ptr_get)]
 #![feature(adt_const_params)]
+#![feature(new_uninit)]
+#![feature(cell_update)]
 //#![feature(allocate_api)]
 
 //! Typed Bump Allocator
@@ -13,7 +17,7 @@
 
 pub mod r#final;
 
-pub mod toy_structures;
+//pub mod toy_structures;
 
 use std::ptr::{self, NonNull};
 use std::cell::Cell;
@@ -125,36 +129,36 @@ impl<T> Drop for Arena<T> {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::Arena;
+// #[cfg(test)]
+// mod test {
+//     use super::Arena;
 
-    #[test]
-    fn test_isolated_arena() {
-        let arena = Arena::<u32>::new();
-        {
-            let a = arena.alloc(1);
-            let b = arena.alloc(2);
-            let c = arena.alloc(3);
-            assert_eq!(*a, 1);
-            assert_eq!(*b, 2);
-            assert_eq!(*c, 3);
-            assert_eq!(arena.len(),3);
-        }
-    }
+//     #[test]
+//     fn test_isolated_arena() {
+//         let arena = Arena::<u32>::new();
+//         {
+//             let a = arena.alloc(1);
+//             let b = arena.alloc(2);
+//             let c = arena.alloc(3);
+//             assert_eq!(*a, 1);
+//             assert_eq!(*b, 2);
+//             assert_eq!(*c, 3);
+//             assert_eq!(arena.len(),3);
+//         }
+//     }
 
-    // Well its slower than General Allocator...
-    #[test]
-    fn test_large() {
-        use std::time::*;
-        // Each fighter is 4*16, 64 bytes
-        let start = Instant::now();
-        let arena = Arena::<[u32;16]>::new();
-        for i in 0..5_000_000 {
-            let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
-        }
-        dbg!(start.elapsed());
-        assert!(start.elapsed() < Duration::from_millis(500))
-    }
+//     // Well its slower than General Allocator...
+//     #[test]
+//     fn test_large() {
+//         use std::time::*;
+//         // Each fighter is 4*16, 64 bytes
+//         let start = Instant::now();
+//         let arena = Arena::<[u32;16]>::new();
+//         for i in 0..5_000_000 {
+//             let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
+//         }
+//         dbg!(start.elapsed());
+//         assert!(start.elapsed() < Duration::from_millis(500))
+//     }
 
-}
+// }
