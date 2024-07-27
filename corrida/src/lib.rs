@@ -1,19 +1,19 @@
 #![warn(missing_docs)]
 #![feature(allocator_api)]
-#![feature(generic_const_exprs)]
 #![feature(const_trait_impl)]
-#![feature(inline_const)]
 #![feature(ptr_metadata)]
 #![feature(slice_ptr_get)]
 #![feature(adt_const_params)]
 #![feature(new_uninit)]
 #![feature(cell_update)]
 #![feature(maybe_uninit_as_bytes)]
-#![feature(core_intrinsics)]
 #![feature(maybe_uninit_fill)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(slice_from_ptr_range)]
 #![feature(alloc_layout_extra)]
+#![feature(generic_const_exprs)]
+#![feature(core_intrinsics)]
+#![feature(generic_const_items)]
 
 //! Typed Bump Allocator
 //! 
@@ -21,89 +21,120 @@
 //! 
 
 
-pub mod basic_structures;
+// pub mod basic_structures;
 
-use std::{alloc::{AllocError, Allocator, Global, GlobalAlloc, Layout}, cell::{Cell, UnsafeCell}, intrinsics::size_of, marker::{PhantomData, PhantomPinned}, mem::{self, MaybeUninit}, ops::Index, ptr::NonNull, slice::{self, from_mut_ptr_range, from_raw_parts_mut}, sync::atomic::{AtomicI32, AtomicU32, Ordering}};
+use std::{alloc::{AllocError, Allocator, Global, GlobalAlloc, Layout}, cell::{Cell, UnsafeCell}, intrinsics::size_of, marker::{PhantomData, PhantomPinned}, mem::{self, MaybeUninit}, num::NonZero, ops::Index, ptr::NonNull, slice::{self, from_mut_ptr_range, from_raw_parts_mut}, sync::atomic::{AtomicI32, AtomicU32, Ordering}};
 
 enum Assert<const CHECK: bool> {}
 trait IsTrue {}
 impl IsTrue for Assert<true> {}
 
-static block_count: AtomicU32 = AtomicU32::new(0);
 
-#[repr(align(256))]
-struct Block
-{   
-    prev: Option<Box<Block>>,
+const BLOCK_MIN_ALIGN: usize = 128;
+
+#[repr(align(128))]
+struct BlockMeta {   
+    prev: Option<Box<BlockMeta>>,
+    block_start: NonNull<u8>,
     cur_ptr: NonNull<u8>,
     block_end: NonNull<u8>
 }
 
-const BLOCK_DATA_SIZE: usize = 1 << 20;
-
-impl Block
+impl BlockMeta
 {
-    const LAYOUT: Layout = unsafe { 
-        Layout::from_size_align_unchecked(BLOCK_DATA_SIZE + size_of::<Self>(), 256)
-    };
 
-    fn new(prev: Option<Box<Block>>) -> NonNull<Self> {
-        //SAFETY, we are about to immedieatly initialize prev, data will always be initalized
+    fn new<const BLOCK_SIZE: usize>(prev: Option<Box<BlockMeta>>) -> NonNull<Self> 
+    where 
+        Assert<{BLOCK_SIZE.rem_euclid(BLOCK_MIN_ALIGN) == 0}>: IsTrue,
+        [(); BLOCK_SIZE + BLOCK_MIN_ALIGN * 2]: 
+    {
+        //SAFETY,
         unsafe {
-            let ptr = Global.allocate(Self::LAYOUT).unwrap().as_mut_ptr();
-            
-            let footer = {
-                NonNull::new_unchecked(ptr.add(BLOCK_DATA_SIZE) as *mut Self)
-            };
+            //SAFETY, align is nonzero power of two, size + a little meta is still 
+            let layout = const { Layout::from_size_align_unchecked(BLOCK_SIZE + size_of::<Self>(), BLOCK_MIN_ALIGN) };
+            let ptr = Global.allocate(layout).unwrap().as_mut_ptr();
 
-            
-            footer.write (Block {
+            // SAFETY, ptr will now be at the end of the data, at the start of metadata with exactly the size needed left
+            let metadata_nn = {
+                NonNull::new_unchecked(ptr.add(BLOCK_SIZE) as *mut Self)
+            };
+            metadata_nn.write (BlockMeta {
                 prev,
+                block_start: NonNull::new_unchecked(ptr),
                 cur_ptr: NonNull::new_unchecked(ptr),
-                block_end: NonNull::new_unchecked(footer.as_ptr() as *mut u8)
+                block_end: NonNull::new_unchecked(metadata_nn.as_ptr() as *mut u8)
             });
 
-            footer
+            metadata_nn
         }
     }
-
+    
     fn alloc(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, AllocError> {
         let align_offset = self.cur_ptr.align_offset(align);
         unsafe {
-            let slot_start_ptr = self.cur_ptr.add(align_offset);
-
-            if slot_start_ptr.add(size) > self.block_end {
+            // SAFETY, we never access this computed pointer
+            if self.cur_ptr.add(align_offset + size) >= self.block_end {
                 Err(AllocError)
             } else {
-                self.cur_ptr = slot_start_ptr.add(size);
-                Ok(slot_start_ptr)
+                // SAFETY, We ensured that we have space for data with this size/align in our block,
+                // we return the aligned slot pointer and increment the current pointer to be at the end of that "allocation"
+                let slot_start = self.cur_ptr.add(align_offset);
+                self.cur_ptr = slot_start.add(size);
+                Ok(slot_start)
             }
+        }
+    }
+}
+
+impl Drop for BlockMeta {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY, same reasoning as line BlockMeta::new dereference
+            let metadata = Box::from_raw(self.block_end.as_ptr() as *mut Self);
+
+            // SAFETY, Align is nonzero power of 2, size is will not overflow
+            // Block End will be ahead of block start
+            let layout = Layout::from_size_align_unchecked(
+                self.block_end.offset_from(self.block_start) as usize, 
+                BLOCK_MIN_ALIGN
+            );
+
+            // Exact same pointer that we got from allocation, layout is all the data since we are dropping the meta data at end of scope
+            Global.deallocate(self.block_start, layout);
+
+            drop(metadata);
         }
     }
 }
 
 
 /// One time use bump allocator.
-/// Useful for many allocations of the same type
+/// Useful for many values / objects with the same lifetime.
+/// Allocates memory in large blocks all at once, mutable references to values are returned, drops only happen when the whole struct is dropped.
 /// Self references are easy because all lifetimes are garunteed to live for the whole arena.
-pub struct Corrida 
-where
+pub struct Corrida<const BLOCK_SIZE: usize = {1 << 16}>
 {
-    cur_block: Cell<NonNull<Block>>,
-    _boo: PhantomData<Block>
+    cur_block: Cell<NonNull<BlockMeta>>,
+    _boo: PhantomData<BlockMeta>
 }
 
 
 
-impl Corrida
-{
+impl<const BLOCK_SIZE: usize> Corrida<BLOCK_SIZE>
+where 
+    Assert<{BLOCK_SIZE.rem_euclid(BLOCK_MIN_ALIGN) == 0}>: IsTrue,
+    [(); BLOCK_SIZE + BLOCK_MIN_ALIGN * 2]: ,
+{   
+    /// Creates a new arena with a block to start. Generic over the default block size in bytes.
     pub fn new() -> Self {
         Self {
-            cur_block: Cell::new(Block::new(None)),
+            cur_block: Cell::new(BlockMeta::new(None)),
             _boo: PhantomData
         }
     }
 
+    /// Allocate the given value at the current pointer in the current block.
+    /// Will create a new block if the current one does not have enough free space.
     pub fn alloc<F>(&self, fighter: F) -> &mut F
     {
         //let mut cur_offset = self.cur_offset.get();
@@ -117,12 +148,7 @@ impl Corrida
                 },
                 Err(_) => {
                     let old_block = Box::from_raw(self.cur_block.get().as_ptr());
-                    let mut new_block = Block::new(Some(old_block));
-
-                    let old = block_count.fetch_add(1, Ordering::Relaxed);
-                    if old % 100 == 0 {
-                        println!("{} blocks", old);
-                    }
+                    let mut new_block = BlockMeta::new(Some(old_block));
 
                     self.cur_block.set(new_block);
                     // SAFETY, New Block is a valid Block
@@ -140,19 +166,26 @@ impl Corrida
     }
 }
 
+impl<const BLOCK_SIZE: usize> Drop for Corrida<BLOCK_SIZE> {
+    fn drop(&mut self) {
+        
+    }
+}
+
 
 #[cfg(test)]
 mod test {
     use std::{hint::black_box, time::{Duration, Instant}};
 
     
-    use super::Corrida;
+    use super::{Corrida, BlockMeta};
     
-  
-    pub static CORRIDA_ALLOC: fn(&Corrida, [i32; 16]) -> &mut [i32; 16] = Corrida::alloc;
     #[test]
     fn test_isolated_arena() {
-        let arena = Corrida::new();
+        dbg!(size_of::<BlockMeta>());
+        dbg!(align_of::<BlockMeta>());
+
+        let arena = Corrida::<{1<<7}>::new();
         {
             let a = arena.alloc(1);
             let b = arena.alloc(2);
@@ -163,34 +196,35 @@ mod test {
         }
     }
 
-    // Well its slower than General Allocator...
-
-    #[inline]
     #[test]
     fn test_large() {
         use std::time::*;
         // Each fighter is 4*16, 64 bytes
         let start = Instant::now();
-        let arena = Corrida::new();
+        let arena = Corrida::<{1 << 20}>::new();
         for i in 0..5_000_000 {
-            let _my_ref = CORRIDA_ALLOC(&arena, [i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
+            let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
             black_box(_my_ref);
         }
         println!("Arena: {}",start.elapsed().as_millis());
     }
 
     #[test]
-    fn test_large2() {
-        let start = Instant::now();
-        let arena = Corrida::new();
-        for i in 0..5_000_000 {
-            let _my_ref = Box::new([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
-            unsafe {
-                let ptr = Box::into_raw(_my_ref);
-                black_box(ptr);
-            }
-        }
-        println!("Old Alloc {}", start.elapsed().as_millis());
+    fn test_mixed() {
+        let arena = Corrida::<{1 << 16}>::new();
+
+        let arr = arena.alloc([1;100]);
+        let char = arena.alloc('c');
+        let i32 =arena.alloc(1);
+        let arena_inside_arena = arena.alloc(Corrida::<128>::new());
+
+        arena_inside_arena.alloc(*arr);
+        arena_inside_arena.alloc(*char);
+        arena_inside_arena.alloc(*i32);
+
+        println!("{:?}", arr);
+        println!("{}", char);
+        println!("{}", i32);
     }
 
 }

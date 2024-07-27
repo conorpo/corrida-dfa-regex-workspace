@@ -2,24 +2,26 @@
 
 /// A simple binary tree implementation, with no backreferences.
 pub mod binary_tree {
-    use crate::Arena;
+    use std::cell::Cell;
+
+    use crate::Corrida;
     /// A node in the tree, does not have a reference to its parent
-    pub struct BinaryTreeNode<'a> {
+    pub struct BinaryTreeNode<'a, T: Copy> {
         /// Data associated with node
-        pub data: (),
+        pub data: Cell<T>,
         /// Reference to left child
-        pub left: Option<&'a BinaryTreeNode<'a>>,
+        pub left: Cell<Option<&'a BinaryTreeNode<'a, T>>>,
         /// Reference to right child
-        pub right: Option<&'a BinaryTreeNode<'a>>
+        pub right: Cell<Option<&'a BinaryTreeNode<'a, T>>>
     }
-    impl BinaryTreeNode<'_> {
+
+    impl<T: Copy> BinaryTreeNode<'_,T> {
         /// Creates a new node (not in the tree struct yet)
-        /// TODO: replace () with generic type
-        pub fn new(data : ()) -> Self {
+        pub fn new(data : T) -> Self {
             Self {
-                data,
-                left: None,
-                right: None
+                data: Cell::new(data),
+                left: Cell::new(None),
+                right: Cell::new(None)
             }
         }
     }
@@ -29,7 +31,7 @@ pub mod binary_tree {
     /// An API for construction and traversal of Binary Trees.
     /// No backreferences
     pub struct BinaryTree<'a> {
-        nodes: Arena<BinaryTreeNode<'a>>,
+        nodes: Corrida,
     }
 
     impl<'a> BinaryTree<'a> {
