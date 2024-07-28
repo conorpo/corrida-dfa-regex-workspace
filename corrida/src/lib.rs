@@ -13,12 +13,12 @@
 #![feature(alloc_layout_extra)]
 #![feature(generic_const_exprs)]
 
+//TODO: Check Documenation, Check Safety, Clean up Structure one last Time. Make it faster to do allocate a single object (high priority)
+
 //! Typed Bump Allocator
 //!
-//! - Useful as for cache-friendly accesses of collection.
-//!
 
-// pub mod basic_structures;
+pub mod basic_structures;
 
 use std::{
     alloc::{AllocError, Allocator, Global, Layout},
@@ -44,7 +44,7 @@ struct BlockMeta {
 impl BlockMeta {
     fn new<const BLOCK_SIZE: usize>(prev: Option<NonNull<BlockMeta>>) -> NonNull<Self>
     where
-        Assert<{ BLOCK_SIZE.rem_euclid(BLOCK_MIN_ALIGN) == 0 }>: IsTrue,
+        Assert<{ BLOCK_SIZE %BLOCK_MIN_ALIGN == 0 }>: IsTrue,
         [(); BLOCK_SIZE + BLOCK_MIN_ALIGN * 2]:,
     {
         //SAFETY,
@@ -96,7 +96,7 @@ pub struct Corrida<const BLOCK_SIZE: usize = { 1 << 16 }> {
 
 impl<const BLOCK_SIZE: usize> Corrida<BLOCK_SIZE>
 where
-    Assert<{ BLOCK_SIZE.rem_euclid(BLOCK_MIN_ALIGN) == 0 }>: IsTrue,
+    Assert<{ BLOCK_SIZE % BLOCK_MIN_ALIGN == 0 }>: IsTrue,
     [(); BLOCK_SIZE + BLOCK_MIN_ALIGN * 2]:,
 {
     /// Creates a new arena with a block to start. Generic over the default block size in bytes.
