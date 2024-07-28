@@ -2,7 +2,7 @@
 
 /// A simple binary tree implementation, with no backreferences.
 pub mod binary_tree {
-    use std::{cell::Cell, path::Iter};
+    use std::cell::Cell;
 
     use crate::Corrida;
     /// A node in the tree, does not have a reference to its parent
@@ -95,6 +95,7 @@ pub mod binary_tree {
                 let mut cur = right;
                 while let Some(left) = cur.left.get() {
                     self.cur_path.push((left, false));
+                    cur = left;
                 }
 
 
@@ -104,10 +105,9 @@ pub mod binary_tree {
                     self.cur_path.pop();
                 }
             }
-
-
             Some(data)
         }
+        
     }
 
 

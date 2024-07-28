@@ -1,5 +1,6 @@
 //! Regex parser based on a DFA implementation
 #![feature(lazy_cell)]
+#![feature(let_chains)]
 
 use core::panic;
 use std::iter::*;
@@ -8,9 +9,10 @@ use std::str::Chars;
 use std::cell::LazyCell;
 use std::collections::HashSet;
 
-use gerber::*;
 use corrida::*;
 use smallvec::*;
+
+pub mod lib2;
 
 
 // Notes:
@@ -398,101 +400,8 @@ impl<'a> RegexParserNewNfa<'a> {
     }
 }
 
-type Transition = (Option<char>, StateLink);
-
-enum StateLink {
-    Simple(NonNull<SimpleState>),
-    Union(NonNull<UnionState>)
-}
-
-struct SimpleState {
-    main_transition: Option<(Option<char>, StateLink)>,
-    extra_epsilon: Option<NonNull<SimpleState>>
-}
-
-// TODO: Try without SmallVec
-struct UnionState {
-    transitions: SmallVec<[Transition; 4]>
-}
-
-pub struct RegexParserSupreme {
-    simple_state_arena: Arena<SimpleState>,
-    union_state_arena: Arena<SimpleState>,
-}
 
 
-// struct SimpleState<'a> {
-//     main_transition: Option<StateEnum<'a>>,
-//     extra_epsilon: Option<StateEnum<'a>>
-// }
-
-// // Union states have a dynamic amount of epsilon transitions.
-// struct UnionState<'a> {
-//     transitions: Vec<StateEnum<'a>>
-// }
-
-// trait State {
-//     fn new() -> Self;
-// }
-
-// impl<'a> State for SimpleState<'a> {
-//     fn new() -> Self {
-//         Self {
-//             main_transition: None,
-//             extra_epsilon: None,
-//         }
-//     }
-// }
-
-// impl<'a> State for UnionState<'a>{
-//     fn new() -> Self {
-//         Self {
-//             transitions: Vec::new(),
-//         }
-//     }
-// }
-
-// enum StateEnum<'a> {
-//     Simple(&'a SimpleState<'a>),
-//     Union(&'a UnionState<'a>)
-// }
-
-// struct NFA {
-//     bump: Bump
-// }
-
-// impl NFA {
-//     pub fn new(size_hint_bytes: usize) -> Self {
-//         Self {
-//             bump: Bump::with_capacity(size_hint_bytes)
-//         }
-//     }
-
-//     pub fn insert_simple(&self) -> &mut SimpleState {
-//         self.bump.alloc(SimpleState::new())
-//     }
-
-//     pub fn insert_union(&self) -> &mut UnionState {
-//         self.bump.alloc(UnionState::new())
-//     }
-// }
-
-pub fn create_regex_dfa(regex_string: &str) -> Nfa<char> {
-    // Easier to create it as an NFA first, then convert using Subset Construction.
-    let nfa = Nfa::<char>::new();
-    let start_node = nfa.alloc_node(false, &[]);
-    nfa.set_start_node(start_node);
-
-    // Setup our recusrive parser, including setup up a static dummy node, in order to get away with Cell replace shenanigans.
-    let _iter = regex_string.chars();
-    // let (_, start_node, end_node) = parse_group::<true>(
-    //     iter, 
-    //     Pin::new(start_node), 
-    //     &nfa
-    // );
-
-    nfa
-}
 
 #[cfg(test)]
 mod test {

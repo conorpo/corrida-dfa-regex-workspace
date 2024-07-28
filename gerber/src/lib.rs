@@ -25,10 +25,12 @@ pub struct DfaVertex<Σ: Eq + Hash + Copy> {
 }
 
 
+const DFA_BLOCK_SIZE_BYTES: usize = 2048;
+
 /// Provides an API for construction and simulation of a DFA structure. 
 /// Symbol type Σ must be hashable and implement display (not asking for alot here..)
 pub struct Dfa<Σ: Eq + Hash + Copy> {
-    arena: Arena<DfaVertex<Σ>>,
+    arena: Corrida::<DFA_BLOCK_SIZE_BYTES>,
     start_node: Cell<Option<VertexLink<Σ>>>
 }
 
@@ -68,7 +70,7 @@ impl<Σ:Eq + Hash + Copy> Dfa<Σ> {
     /// Creates a new DFA with no vertices, but an Arena ready for pushing verts.
     pub fn new() -> Self {
         Self {
-            arena: Arena::new(),
+            arena: Corrida::<{DFA_BLOCK_SIZE_BYTES}>::new(),
             start_node: Cell::new(None)
         }
     }
@@ -95,7 +97,7 @@ impl<Σ:Eq + Hash + Copy> Dfa<Σ> {
                 cur = next;
             } else {
                 // Transition did not exist, DFA error
-                panic!("Transition not provided from current node on the '{symbol}' symbol.")
+                panic!("Transition not provided from current node on the symbol.")
             }
         }
         cur.is_accept
@@ -108,7 +110,7 @@ impl<Σ:Eq + Hash + Copy> Dfa<Σ> {
                 cur = next;
             } else {
                 // Transition did not exist, DFA error
-                panic!("Transition not provided from current node on the '{symbol}' symbol.")
+                panic!("Transition not provided from current node on the symbol.")
             }
         }
         cur.is_accept
@@ -116,91 +118,91 @@ impl<Σ:Eq + Hash + Copy> Dfa<Σ> {
 }
 
 /// A node in the Nfa, transitions are stored as a hashmap to a vec of target ptrs. At what point do we have too much indirections?
-struct State<Σ: Eq + Hash> {
-    is_accept: bool,
-    transitions: HashMap<
-        Option<Σ>, Vec<NonNull<State<Σ>>>, // TODO: CHANGE HASH,  CHANGE ALOCATOR
-    >,
-}
+// struct State<Σ: Eq + Hash> {
+//     is_accept: bool,
+//     transitions: HashMap<
+//         Option<Σ>, Vec<NonNull<State<Σ>>>, // TODO: CHANGE HASH,  CHANGE ALOCATOR
+//     >,
+// }
 
-impl<Σ: Eq + Hash> State<Σ> {
-    pub fn new() -> Self {
-        Self {
-            is_accept: false,
-            transitions: HashMap::new()
-        }
-    }
+// impl<Σ: Eq + Hash> State<Σ> {
+//     pub fn new() -> Self {
+//         Self {
+//             is_accept: false,
+//             transitions: HashMap::new()
+//         }
+//     }
 
-    /// Add just one transition
-    pub fn push_transition(&mut self, on: Option<Σ>, to: &State<Σ>) {
-        // SAFETY
-        // State Reference is garunteed to be a valid reference to a State
-        // We are only using NonNulls for niche optimizations, Nfa won't ever need to mutate after transitioning.
-        let ptr = unsafe {
-            NonNull::new_unchecked(
-                to as *const State<Σ> as *mut State<Σ>
-            )
-        };
+//     /// Add just one transition
+//     pub fn push_transition(&mut self, on: Option<Σ>, to: &State<Σ>) {
+//         // SAFETY
+//         // State Reference is garunteed to be a valid reference to a State
+//         // We are only using NonNulls for niche optimizations, Nfa won't ever need to mutate after transitioning.
+//         let ptr = unsafe {
+//             NonNull::new_unchecked(
+//                 to as *const State<Σ> as *mut State<Σ>
+//             )
+//         };
 
-        // How to prevent duplicate transitions on this one?
-        match self.transitions.entry(on) {
-            Entry::Occupied(existing) => {
-                existing.into_mut().push(ptr);
-            },
-            Entry::Vacant(slot) => {
-                slot.insert(vec![ptr]);
-            }
-        }    
+//         // How to prevent duplicate transitions on this one?
+//         match self.transitions.entry(on) {
+//             Entry::Occupied(existing) => {
+//                 existing.into_mut().push(ptr);
+//             },
+//             Entry::Vacant(slot) => {
+//                 slot.insert(vec![ptr]);
+//             }
+//         }    
 
-    }
+//     }
 
-    /// Think about good way to do tihs.
-    pub fn push_transitions<'a>(&mut self, input: &[(Option<Σ>, &State<Σ>)])
-    where
-        Σ: 'a + Copy 
-    {
-        let input_slice: &[(Option<Σ>, &State<Σ>)] = input.into();
+//     /// Think about good way to do tihs.
+//     pub fn push_transitions<'a>(&mut self, input: &[(Option<Σ>, &State<Σ>)])
+//     where
+//         Σ: 'a + Copy 
+//     {
+//         let input_slice: &[(Option<Σ>, &State<Σ>)] = input.into();
 
-        for transition in input_slice {
-            self.push_transition(transition.0, transition.1)
-        }
-    }
-}
+//         for transition in input_slice {
+//             self.push_transition(transition.0, transition.1)
+//         }
+//     }
+// }
 
 
-/// Nfa that provides shared references to nodes, transitions are owned by the Nfa itself.
-// TODO: This could use typed allocator, or could use the generic allocator version
-pub struct NfaSupreme<Σ: Eq + Hash> {
-    arena: Arena<State<Σ>>,
-    starting_node: Cell<Option<NonNull<State<Σ>>>>,
-}
+// /// Nfa that provides shared references to nodes, transitions are owned by the Nfa itself.
+// // TODO: This could use typed allocator, or could use the generic allocator version
+// pub struct NfaSupreme<Σ: Eq + Hash> {
+//     arena: Arena<State<Σ>>,
+//     starting_node: Cell<Option<NonNull<State<Σ>>>>,
+// }
 
-impl<Σ: Eq + Hash> NfaSupreme<Σ> {
-    /// Creates a new shared ref nfa.
-    pub fn new() -> Self {
-        Self {
-            arena: Arena::new(),
-            starting_node: Cell::new(None),
-        }
-    }
+// impl<Σ: Eq + Hash> NfaSupreme<Σ> {
+//     /// Creates a new shared ref nfa.
+//     pub fn new() -> Self {
+//         Self {
+//             arena: Arena::new(),
+//             starting_node: Cell::new(None),
+//         }
+//     }
     
-    /// Updates the entry point of the NFA
-    pub fn set_start_node(&self, target: &State<Σ>) {
-        self.starting_node.set(Some(NonNull::from(target)));
-    }
+//     /// Updates the entry point of the NFA
+//     pub fn set_start_node(&self, target: &State<Σ>) {
+//         self.starting_node.set(Some(NonNull::from(target)));
+//     }
 
-    /// 
-    pub fn insert_state(&self) -> &mut State<Σ> {
-        self.arena.alloc(State::new())
-    }
-    /// Converts this NFA into a DFA using subset construction.
-    pub fn into_dfa(self) -> Dfa<Σ> 
-    where
-        Σ: Copy
-    {
-        todo!();
-    }
-}
+//     /// 
+//     pub fn insert_state(&self) -> &mut State<Σ> {
+//         self.arena.alloc(State::new())
+//     }
+//     /// Converts this NFA into a DFA using subset construction.
+//     pub fn into_dfa(self) -> Dfa<Σ> 
+//     where
+//         Σ: Copy
+//     {
+//         todo!();
+//     }
+// }
 
 
 
@@ -209,10 +211,10 @@ impl<Σ: Eq + Hash> NfaSupreme<Σ> {
 mod test {
     //use crate::DfaVertex;
 
-    use corrida::Arena;
+    use corrida::Corrida;
 
     //use super::Vertex;
-    use super::{Dfa, State, NfaSupreme, DfaVertex};
+    use super::{Dfa, DfaVertex};
 
     #[test]
     pub fn test_basics() {
@@ -236,8 +238,6 @@ mod test {
             }
             dfa.set_start_node(s_0);
         }
-        assert_eq!(dfa.arena.len(), 3);
-
         assert_eq!(dfa.simulate_slice(&"1001".chars().collect::<Vec<char>>()), true);
         assert_eq!(dfa.simulate_slice(&"1000".chars().collect::<Vec<char>>()), false);
     }
@@ -303,38 +303,38 @@ mod test {
         assert!(dfa.simulate_iter(vec!['1','0','0','1'].into_iter()));
     }
 
-    #[test]
-    fn test_nfa() {
-        let mut arena = Arena::<State<char>>::new();
-        let mut nfa = NfaSupreme::<char>::new();
+    // #[test]
+    // fn test_nfa() {
+    //     let mut arena = Arena::<State<char>>::new();
+    //     let mut nfa = NfaSupreme::<char>::new();
 
-        {
-            let s_0 = nfa.insert_state();
+    //     {
+    //         let s_0 = nfa.insert_state();
 
-            let s_1 = nfa.insert_state();
-            let s_3 = nfa.insert_state();
+    //         let s_1 = nfa.insert_state();
+    //         let s_3 = nfa.insert_state();
 
-            s_0.push_transition(Some('a'), s_1);
-            s_0.push_transition(Some('a'), s_3);
+    //         s_0.push_transition(Some('a'), s_1);
+    //         s_0.push_transition(Some('a'), s_3);
 
-            let s_2 = nfa.insert_state();
-            s_1.push_transition(Some('b'), s_2);
+    //         let s_2 = nfa.insert_state();
+    //         s_1.push_transition(Some('b'), s_2);
 
-            let s_4 = nfa.insert_state();
-            let s_5 = nfa.insert_state();
-            let s_6 = nfa.insert_state();
-            let s_7 = nfa.insert_state();
+    //         let s_4 = nfa.insert_state();
+    //         let s_5 = nfa.insert_state();
+    //         let s_6 = nfa.insert_state();
+    //         let s_7 = nfa.insert_state();
 
-            s_3.push_transitions(&[(None, s_4),(None, s_5)]);
+    //         s_3.push_transitions(&[(None, s_4),(None, s_5)]);
 
-            s_4.push_transition(Some('d'), s_6);
-            s_5.push_transition(Some('c'), s_7);
+    //         s_4.push_transition(Some('d'), s_6);
+    //         s_5.push_transition(Some('c'), s_7);
 
-            nfa.set_start_node(s_0);
-        }
+    //         nfa.set_start_node(s_0);
+    //     }
 
-        let dfa = nfa.into_dfa();
-    }
+    //     let dfa = nfa.into_dfa();
+    // }
 
 
 }
