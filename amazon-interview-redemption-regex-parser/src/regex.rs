@@ -16,8 +16,7 @@ use gerber::{nfa::*, nfa_state_creator};
     
 */
 type RState = State<2, char>;
-fn parse_regex(regex_string: &str) -> Nfa<RState> {
-    let arena = Corrida::new();
+fn parse_regex<'a>(regex_string: &str, arena: &'a Corrida) -> Nfa<'a ,RState> {
     nfa_state_creator!(($), new_state, arena, char, 2);
     let create_state = |is_final| new_state!(is_final);
     
@@ -70,15 +69,6 @@ fn parse_regex(regex_string: &str) -> Nfa<RState> {
 
         if add_cycle {
             base_end.push_transition(None, Some(&base_start));
-
-            if add_skip {
-                let old_start = base_start;
-                base_start = create_state(false);
-                base_start.push_transition(None, Some(old_start));
-                let old_end = base_end;
-                base_end = create_state(false);
-                old_end.push_transition(None, Some(base_end));
-            }
         }
         if add_skip {
             base_start.push_transition(None, Some(&base_end));
@@ -159,28 +149,60 @@ fn parse_regex(regex_string: &str) -> Nfa<RState> {
     let mut chars = regex_string.chars().peekable();
     let (start_node, end_node) = parse_group::<true>(&mut chars, &create_state);
     end_node.set_accept(true);
-    let start_node = NonNull::new(start_node).unwrap();
 
-    Nfa::new(arena, start_node)
+    Nfa::new(start_node)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
     pub fn test_basics() {
-        let nfa = parse_regex("ab*(c|)");
+        let arena = Corrida::new();
+        let nfa = parse_regex("ab*(c|)", &arena);
         println!("Done Parsing");
         
-        //assert_eq!(nfa.simulate_iter("".chars()), false);
+        assert_eq!(nfa.simulate_iter("".chars()), false);
         assert_eq!(nfa.simulate_iter("a".chars()), true);
-        // assert_eq!(nfa.simulate_iter("ab".chars()), true);
-        // assert_eq!(nfa.simulate_iter("ac".chars()), true);
-        // assert_eq!(nfa.simulate_iter("abb".chars()), true);
-        // assert_eq!(nfa.simulate_iter("abbcc".chars()), false);
-        // assert_eq!(nfa.simulate_iter("abbbac".chars()), false);
-        // assert_eq!(nfa.simulate_iter("abaa".chars()), false);
-        // assert_eq!(nfa.simulate_iter("abbbbbbbc".chars()), true);
+        assert_eq!(nfa.simulate_iter("ab".chars()), true);
+        assert_eq!(nfa.simulate_iter("ac".chars()), true);
+        assert_eq!(nfa.simulate_iter("abb".chars()), true);
+        assert_eq!(nfa.simulate_iter("abbcc".chars()), false);
+        assert_eq!(nfa.simulate_iter("abbbac".chars()), false);
+        assert_eq!(nfa.simulate_iter("abaa".chars()), false);
+        assert_eq!(nfa.simulate_iter("abbbbbbbc".chars()), true);
     }    
+
+    #[test]
+    pub fn test_unfriendly() {
+        let arena = Corrida::new();
+        let nfa = parse_regex("a*b*a*b*a*b*a*b*a*b*(|)?a", &arena);
+
+        let mut test = vec!['b'; 100_000];
+        let start = Instant::now();
+        assert_eq!(nfa.simulate_slice(&test), false);
+        test.push('a');
+        assert_eq!(nfa.simulate_slice(&test), true);
+        println!("Unfriendly {:?}", start.elapsed());
+    }
+
+    #[test]
+    pub fn complicated() {
+        let arena = Corrida::new();
+        let nfa = parse_regex("(((a|b)+c?(a|b)*)?(c(a|b)+|a?b?c+)((a|b|c)*)(a(a)+)?)+", &arena);
+
+        let mut testa = vec!['a'; 100_000];
+        let mut testb = vec!['b'; 100_000];
+        let mut testc = vec!['c'; 100_000];
+        let start = Instant::now();
+
+        assert_eq!(nfa.simulate_slice(&testa), false);
+        assert_eq!(nfa.simulate_slice(&testb), false);
+        assert_eq!(nfa.simulate_slice(&testc), true);
+        
+        println!("Complicated {:?}", start.elapsed());
+    }
 }

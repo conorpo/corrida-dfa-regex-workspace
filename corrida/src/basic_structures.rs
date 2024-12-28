@@ -2,81 +2,39 @@
 
 /// A simple binary tree implementation, with no backreferences.
 pub mod binary_tree {
-    use std::cell::Cell;
+    use std::{cell::Cell, rc::Rc};
 
     use crate::*;
     /// A node in the tree, does not have a reference to its parent
-    pub struct BinaryTreeNode<'a, T: Copy> {
+    pub struct BTree<'a, T: Copy> {
         /// Data associated with node
-        pub data: Cell<T>,
+        pub data: T,
         /// Reference to left child
-        pub left: Cell<Option<&'a BinaryTreeNode<'a, T>>>,
+        pub left: Option<&'a BTree<'a, T>>,
         /// Reference to right child
-        pub right: Cell<Option<&'a BinaryTreeNode<'a, T>>>
+        pub right: Option<&'a BTree<'a, T>>
     }
 
-    impl<T: Copy> BinaryTreeNode<'_,T> {
+    impl<T: Copy> BTree<'_,T> {
         /// Creates a new node (not in the tree struct yet)
         pub fn new(data : T) -> Self {
             Self {
-                data: Cell::new(data),
-                left: Cell::new(None),
-                right: Cell::new(None)
-            }
-        }
-    }
-
-
-
-    /// An API for construction and traversal of Binary Trees.
-    /// No backreferences
-    pub struct BinaryTree<'a, T: Copy> {
-        nodes: Corrida,
-        root: Cell<Option<&'a BinaryTreeNode<'a, T>>>
-    }
-
-    impl<'a, T: Copy> BinaryTree<'a, T> 
-    {
-        /// Creates a new binary tree.
-        pub fn new() -> Self {
-            Self {
-                nodes: Corrida::new(),
-                root: Cell::new(None)
+                data,
+                left: None,
+                right: None
             }
         }
 
-        /// Inserts a node
-        pub fn insert_node(&self, node_data: T) -> &mut BinaryTreeNode<'a, T> 
-        where [(); 4096 - size_of::<BinaryTreeNode<'_, T>>()]: ,
-              [(); {BLOCK_MIN_ALIGN % align_of::<BinaryTreeNode<'_, T>>() == 0} as usize - 1]: ,
-        {
-            self.nodes.alloc(BinaryTreeNode::new(node_data))
-        }
-
-        /// Iterates over the binary tree, using 'inorder'.
-        pub fn iter_in_order(&self) -> IterInOrder<'a, T> {
-            let mut cur_path = Vec::new();
-
-            let mut node_opt = self.root.get();
-
-            while let Some(cur_node) = node_opt {
-                cur_path.push((cur_node, false));
-                node_opt = cur_node.left.get();
-            } 
-            
+        pub fn iter_in_order(&self) -> IterInOrder<T> {
             IterInOrder {
-                cur_path
+                stack: vec![(self, false)]
             }
         }
-
-        // pub fn iter_pre_order(&self) -> IterPreOrder<'a, T> {
-        //     todo!();
-        // }
     }
 
     /// An iterator that traverses the binary tree 'inorder'.
     pub struct IterInOrder<'a, T: Copy> {
-        cur_path: Vec<(&'a BinaryTreeNode<'a, T>, bool)>, // Bool if we've already done that node
+        stack: Vec<(&'a BTree<'a, T>, bool)>, // Bool if we've already gotten the left child
 
     }
 
@@ -84,35 +42,37 @@ pub mod binary_tree {
         type Item = T;
     
         fn next(&mut self) -> Option<Self::Item> {
-            if self.cur_path.is_empty() {
+            if self.stack.is_empty() {
                 return None;
             }
 
-            let (node, visited) = self.cur_path.last_mut().unwrap();
-            let data = node.data.get();
-
-            *visited = true;
-
-            if let Some(right) = node.right.get() {
-                self.cur_path.push((right, false));
-
-                // For inorder we need to make sure all left nodes are done first
-                let mut cur = right;
-                while let Some(left) = cur.left.get() {
-                    self.cur_path.push((left, false));
-                    cur = left;
-                }
-
-
-            } else {
-                // This node and its children are done, go up until we get to the next unfinished node
-                while let Some((_, true)) = self.cur_path.last() {
-                    self.cur_path.pop();
+            let mut last = self.stack.last_mut().unwrap();
+            while !last.1 {
+                last.1 = true;
+                if let Some(left) = last.0.left {
+                    self.stack.push((left, false));
+                    last = self.stack.last_mut().unwrap();
                 }
             }
-            Some(data)
+
+            let last = self.stack.pop().unwrap();
+
+            if let Some(right) = last.0.right {
+                self.stack.push((right, false));
+            }
+
+            return Some(last.0.data);
         }
-        
+    }
+
+    macro_rules! node_creator {
+        ($d: tt, $macro_name: ident, $arena: expr, $type: ty) => {
+            macro_rules! $macro_name {
+                ($data: expr) => {
+                    $arena.alloc(<$type>::new($data))
+                };
+            };
+        };
     }
 
 
@@ -121,45 +81,22 @@ pub mod binary_tree {
         use super::*;
 
         #[test]
-        fn test_right_line() {
-            let tree = BinaryTree::new();
+        fn test_line() {
+            let arena = Corrida::new();
+            node_creator!($, create_node, arena, BTree<i32>);
 
-            // Make root
-            let mut cur: &BinaryTreeNode<i32> = tree.insert_node(0);
-            tree.root.set(Some(cur));
+            let mut cur = create_node!(1_000_000);
 
-            // Make Root
-            for i in 1..=1_000_000 {
-                let child = tree.insert_node(i);
-                cur.right.set(Some(child));
-                cur = child;
+            for i in (0..1_000_000).rev() {
+                let parent = create_node!(i);
+                parent.right = Some(cur);
+                cur = parent;
             }
 
-            let mut itr = tree.iter_in_order();
+            let mut itr = cur.iter_in_order();
 
             assert_eq!(itr.next(), Some(0));
             assert_eq!(itr.last(), Some(1_000_000));
-        }
-
-        #[test]
-        fn test_left_line() {
-            let tree = BinaryTree::new();
-
-            // Make root
-            let mut cur: &BinaryTreeNode<i32> = tree.insert_node(0);
-            tree.root.set(Some(cur));
-
-            // Make Root
-            for i in 1..=1_000_000 {
-                let child = tree.insert_node(i);
-                cur.left.set(Some(child));
-                cur = child;
-            }
-
-            let mut itr = tree.iter_in_order();
-
-            assert_eq!(itr.next(), Some(1_000_000));
-            assert_eq!(itr.last(), Some(0)); 
         }
     }
 }

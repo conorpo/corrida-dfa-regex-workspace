@@ -208,9 +208,16 @@ mod test {
         arena_inside_arena.alloc(*arr);
         arena_inside_arena.alloc(*char);
         arena_inside_arena.alloc(*i32);
+    }
 
-        println!("{:?}", arr);
-        println!("{}", char);
-        println!("{}", i32);
+    #[test]
+    fn test_drop() {
+        for _ in 0..10_000 {
+            let arena = Corrida::new();
+            for _ in 0..10_000 {
+                let _my_ref = arena.alloc(1);
+            }
+            let big = arena.alloc([1; 10_000]);
+        }
     }
 }

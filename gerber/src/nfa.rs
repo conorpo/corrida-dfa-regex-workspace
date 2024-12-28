@@ -1,8 +1,10 @@
 use corrida::Corrida;
 use smallmap::Map;
-use std::ptr::NonNull;
+use std::{collections::HashSet, ptr::NonNull};
 use std::hash::Hash;
 use smallvec::{Array, SmallVec};
+
+use crate::dfa::{Dfa, PartialState};
 
 // MARK: State
 /// A state in the NFA, optimized for NFA which mostly contain nodes with small number of transitions. If a node has more than 'TARGETS_HINT' transitions on a given symbol, the target list will be heap allocated.
@@ -137,27 +139,102 @@ macro_rules! nfa_state_creator {
 
 // MARK: NFA
 /// A non-deterministic fintie automaton.
-pub struct Nfa<T> {
-    _arena: Corrida,
-    start_node: NonNull<T>
+pub struct Nfa<'a ,T> {
+    start_node: &'a T,
 }
 
-impl<const TARGETS_HINT:usize, Σ: Eq + Hash + Copy>  Nfa<State<TARGETS_HINT, Σ>> 
+impl<'a, const TARGETS_HINT:usize, Σ: Eq + Hash + Copy>  Nfa<'a, State<TARGETS_HINT, Σ>> 
 where 
     [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
     /// Creates a new NFA with the given start node, consumes the arena where the nodes were made.
     /// TODO: This can just take any arena, and then we would be able to change the NFA after creation. is that a good idea?
-    pub fn new(arena: Corrida, start_node: NonNull<State<TARGETS_HINT, Σ>>) -> Self {
+    pub fn new(start_node: &'a State<TARGETS_HINT, Σ>) -> Self {
         Self {
-            _arena: arena,
             start_node
         }
     }
 
+    pub fn as_dfa(&self) -> Dfa<'a, Σ, PartialState<Σ>> {
+        let mut hash_map = HashMap::new();
+
+        fn set_hash(states: &[&State<TARGETS_HINT, Σ>]) -> 
+
+        let mut current_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(self.start_node, 1);
+        let mut set: HashSet<*const State<TARGETS_HINT, Σ>> = HashSet::from([self.start_node as *const State<TARGETS_HINT, Σ>]);
+        set.reserve(32);
+        let mut i = 0;
+        while i < current_states.len() {
+            let state = current_states[i];
+            for next in state.get_transitions(None) {
+                if set.insert(next as *const State<TARGETS_HINT, Σ>) {
+                    current_states.push(next);
+                }
+            }
+            i += 1;
+        }
+
+
+
+        todo!()
+    }
+
     /// Simulates the NFA on the given input, returning if the NFA accepts the input.
     pub fn simulate_iter(&self, input: impl Iterator<Item = Σ>) -> bool {
-        let mut current_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(unsafe { self.start_node.as_ref() }, 1);
+        let mut current_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(self.start_node, 1);
+        let mut set: HashSet<*const State<TARGETS_HINT, Σ>> = HashSet::from([self.start_node as *const State<TARGETS_HINT, Σ>]);
+        set.reserve(32);
+        let mut next_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::new();
+
+        let mut i = 0;
+        while i < current_states.len() {
+            let state = current_states[i];
+            for next in state.get_transitions(None) {
+                if set.insert(next as *const State<TARGETS_HINT, Σ>) {
+                    current_states.push(next);
+                }
+            }
+            i += 1;
+        }
+
+        for symbol in input {
+            set.clear();
+
+            // Symbol Transition
+            for cur in current_states.into_iter() {
+                for next in cur.get_transitions(Some(symbol)) {
+                    if set.insert(next as *const State<TARGETS_HINT, Σ>) {
+                        next_states.push(next);
+                    }
+                }
+            }
+
+            // Epsilon Closure
+            let mut i = 0;
+            while i < next_states.len() {
+                let state = next_states[i];
+                for next in state.get_transitions(None) {
+                    if set.insert(next as *const State<TARGETS_HINT, Σ>) {
+                        next_states.push(next);
+                    }
+                }
+                i += 1;
+            }
+
+            (current_states, next_states) = (next_states, SmallVec::new());
+        }
+
+        current_states.into_iter().any(|state| state.is_accept)
+    }
+
+    /// Simulates the NFA on the given input, returning if the NFA accepts the input.
+    pub fn simulate_slice(&self, input: &[Σ]) -> bool {
+        self.simulate_iter(input.iter().copied())
+    }
+
+    /// Simulates the NFA on the given input, returning if the NFA accepts the input. Will infinite loop on epsilon loops, so only use for 'friendly' NFAs where specific states are not reached many times at the same token.
+    pub fn simulate_iter_friendly(&self, input: impl Iterator<Item = Σ>) -> bool {
+        let mut current_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(self.start_node, 1);
         let mut next_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::new();
 
         let mut i = 0;
@@ -168,7 +245,6 @@ where
             }
             i += 1;
         }
-        //println!("current_states: {:?}", current_states.len());
 
         //? In a well formed NFA, i believe that reaching the same state from two different paths is very rare.
         for symbol in input {
@@ -179,7 +255,6 @@ where
             }
 
             let mut i = 0;
-            println!("next_states: {:?}", next_states.len());
             while i < next_states.len() {
                 
                 for next in next_states[i].get_transitions(None) {
@@ -187,16 +262,15 @@ where
                 }
                 i += 1;
             }
-            println!("next_states_after_epsilon: {:?}", next_states.len());
             (current_states, next_states) = (next_states, SmallVec::new());
         }
 
         current_states.into_iter().any(|state| state.is_accept)
     }
 
-    /// Simulates the NFA on the given input, returning if the NFA accepts the input.
-    pub fn simulate_slice(&self, input: &[Σ]) -> bool {
-        self.simulate_iter(input.iter().copied())
+    /// Simulates the NFA on the given input, returning if the NFA accepts the input. Will infinite loop on epsilon loops, so only use for 'friendly' NFAs where specific states are not reached many times at the same token.
+    pub fn simulate_slice_friendly(&self, input: &[Σ]) -> bool {
+        self.simulate_iter_friendly(input.iter().copied())
     }
 }
 
@@ -230,16 +304,50 @@ mod test {
             s_3.push_transition(Some('1'), Some(s_4));
             s_0.push_transition(None, Some(s_3));
 
-            NonNull::new(s_0).unwrap()
+            s_0
         };
 
-        let nfa = Nfa::new(arena, start_node);
-        assert_eq!(nfa.simulate_slice(&[]), true);
-        assert_eq!(nfa.simulate_slice(&['0','0']),true);
-        assert_eq!(nfa.simulate_slice(&['0','1']), false);
-        assert_eq!(nfa.simulate_slice(&['1','1']),true);
-        assert_eq!(nfa.simulate_slice(&['0','0','0','1','0','1','0']),true);
-        assert_eq!(nfa.simulate_slice(&['0','0','0','1','1','1','0','0']),false);
+        let nfa = Nfa::new(start_node);
+        assert_eq!(nfa.simulate_slice_friendly(&[]), true);
+        assert_eq!(nfa.simulate_slice_friendly(&['0','0']),true);
+        assert_eq!(nfa.simulate_slice_friendly(&['0','1']), false);
+        assert_eq!(nfa.simulate_slice_friendly(&['1','1']),true);
+        assert_eq!(nfa.simulate_slice_friendly(&['0','0','0','1','0','1','0']),true);
+        assert_eq!(nfa.simulate_slice_friendly(&['0','0','0','1','1','1','0','0']),false);
+    }
+
+    #[test]
+    pub fn test_big_friendly() {
+        let arena = Corrida::new();
+        nfa_state_creator!(($), new_state, arena, u8, 2);
+
+        let start_node = {
+            let s_0 = new_state!(false, &[(Some(1), None), (Some(0), None)]);
+            let s_1 = new_state!();
+            s_0.push_transition(Some(1), Some(s_1));
+            let s_2 = new_state!();
+            s_1.push_transition(Some(0), Some(s_2));
+            s_1.push_transition(Some(1), Some(s_2));
+            let s_3 = new_state!();
+            s_2.push_transition(Some(0), Some(s_3));
+            s_2.push_transition(Some(1), Some(s_3));
+            let s_4 = new_state!(true);
+            s_3.push_transition(Some(0), Some(s_4));
+            s_3.push_transition(Some(1), Some(s_4));
+            
+            s_0
+        };
+
+        let nfa = Nfa::new(start_node);
+        let mut test = vec![1; 1_000_000];
+        test.extend([0,0,0]);
+
+        let start = Instant::now();
+        assert_eq!(nfa.simulate_slice_friendly(&test),true);
+        test.push(1);
+        assert_eq!(nfa.simulate_slice_friendly(&test),false);
+
+        println!("Big Input Friednly {:?}", start.elapsed());
     }
 
     #[test]
@@ -260,10 +368,11 @@ mod test {
             let s_4 = new_state!(true);
             s_3.push_transition(Some(0), Some(s_4));
             s_3.push_transition(Some(1), Some(s_4));
-            NonNull::new(s_0).unwrap()
+            
+            s_0
         };
 
-        let nfa = Nfa::new(arena, start_node);
+        let nfa = Nfa::new(start_node);
         let mut test = vec![1; 1_000_000];
         test.extend([0,0,0]);
 
@@ -275,6 +384,36 @@ mod test {
         println!("Big Input {:?}", start.elapsed());
     }
 
+    #[test]
+    pub fn test_loop() {
+        let arena = Corrida::new();
+        nfa_state_creator!(($), new_state, arena, u8, 2);
+
+        let start_node = {
+            let s_0 = new_state!(false, &[(Some(1), None), (Some(0), None)]);
+            let mut cur = new_state!(false);
+            s_0.push_transition(None, Some(cur));
+
+            for _ in (0..100).rev() {
+                let new = new_state!(false);
+                cur.push_transition(None, Some(new));
+                cur = new;
+            }
+            cur.set_accept(true);
+            cur.push_transition(None, Some(s_0));
+            
+            s_0
+        };
+
+        let nfa = Nfa::new(start_node);
+        let mut test = vec![1; 100_000];
+        let start = Instant::now();
+        assert_eq!(nfa.simulate_slice(&test),true);
+        test.push(1);
+        assert_eq!(nfa.simulate_slice(&test),true);
+
+        println!("Epsilon Closures {:?}", start.elapsed());
+    }
 }
 
 

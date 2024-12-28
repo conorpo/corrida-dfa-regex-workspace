@@ -123,17 +123,15 @@ impl<Σ:Eq + Hash + Copy + Indexable> State<Σ> for CompleteState<Σ> {
 /// Provides an API for construction and simulation of a DFA structure. 
 /// Symbol type Σ must be hashable and implement display (not asking for alot here..)
 /// 
-pub struct Dfa<Σ: Eq + Hash + Copy, S: State<Σ>> {
-    _arena: Corrida,
-    start_node: NonNull<S>,
+pub struct Dfa<'a, Σ: Eq + Hash + Copy, S: State<Σ>> {
+    start_node: &'a S,
     _boo: PhantomData<Σ>
 }
 
-impl<Σ:Eq + Hash + Copy> Dfa<Σ, PartialState<Σ>>{
+impl<'a, Σ:Eq + Hash + Copy> Dfa<'a, Σ, PartialState<Σ>>{
     /// Creates a new DFA with no vertices, but an Arena ready for pushing verts.
-    pub fn new(arena: Corrida, start_node: NonNull<PartialState<Σ>>) -> Self {
+    pub fn new(start_node: &'a PartialState<Σ>) -> Self {
         Self {
-            _arena: arena,
             start_node,
             _boo: PhantomData
         }
@@ -147,7 +145,7 @@ impl<Σ:Eq + Hash + Copy> Dfa<Σ, PartialState<Σ>>{
     
     /// Tests the provided input sequence on an iterator, returning true if the DFA ends at an accept state.
     pub fn simulate_iter(&self, input: impl Iterator<Item = Σ>) -> bool {
-        let mut cur: &PartialState<Σ> = unsafe { self.start_node.as_ref() };
+        let mut cur: &PartialState<Σ> = self.start_node;
         for symbol in input {
             if let Some(next) = cur.get_transition(symbol) {
                 cur = next;
@@ -159,11 +157,10 @@ impl<Σ:Eq + Hash + Copy> Dfa<Σ, PartialState<Σ>>{
     }
 }
 
-impl<Σ:Eq + Hash + Copy + Indexable> Dfa<Σ, CompleteState<Σ>>{
+impl<'a, Σ:Eq + Hash + Copy + Indexable> Dfa<'a, Σ, CompleteState<Σ>>{
     /// Creates a new DFA with no vertices, but an Arena ready for pushing verts.
-    pub fn new(arena: Corrida, start_node: NonNull<CompleteState<Σ>>) -> Self {
+    pub fn new(start_node: &'a CompleteState<Σ>) -> Self {
         Self {
-            _arena: arena,
             start_node,
             _boo: PhantomData
         }
@@ -171,7 +168,7 @@ impl<Σ:Eq + Hash + Copy + Indexable> Dfa<Σ, CompleteState<Σ>>{
 
     /// Tests the provided input sequence, returning true if the DFA ends at an accept state.
     pub fn simulate_iter(&self, input: impl Iterator<Item = Σ>) -> bool {
-        let mut cur: &CompleteState<Σ> = unsafe { self.start_node.as_ref() };
+        let mut cur: &CompleteState<Σ> = self.start_node;
         for symbol in input {
             if let Some(next) = cur.get_transition(symbol.get_index()) {
                 cur = next;
@@ -240,10 +237,10 @@ mod test {
     
                 assert_eq!(cur as *const PartialState<char>, s_0 as *const PartialState<char>);
             }
-            NonNull::new(s_0 as *mut PartialState<char>).unwrap()
+            s_0
         };
 
-        let dfa = Dfa::<char, PartialState<char>>::new(arena, start_node);
+        let dfa = Dfa::<char, PartialState<char>>::new(start_node);
         assert_eq!(dfa.simulate_slice(&"1001".chars().collect::<Vec<char>>()), true);
         assert_eq!(dfa.simulate_slice(&"1000".chars().collect::<Vec<char>>()), false);
     }
@@ -265,10 +262,10 @@ mod test {
             s_1.add_transition(('1', Some(s_0)));
             s_1.add_transition(('0', Some(s_2)));
             
-            NonNull::new(s_0 as *mut PartialState<char>).unwrap()
+            s_0
         };
 
-        let dfa = Dfa::<char, PartialState<char>>::new(arena, start_node);
+        let dfa = Dfa::<char, PartialState<char>>::new(start_node);
 
         let mut test_vec = Vec::new();
 
@@ -319,10 +316,10 @@ mod test {
             s_1.add_transition((ONE, Some(s_0)));
             s_1.add_transition((ZERO,Some(s_2)));
             
-            NonNull::new(s_0 as *mut CompleteState<Binary>).unwrap()
+            s_0
         };
 
-        let dfa = Dfa::<Binary, CompleteState<Binary>>::new(arena, start_node);
+        let dfa = Dfa::<Binary, CompleteState<Binary>>::new(start_node);
 
         let mut test_vec = Vec::new();
         
@@ -358,10 +355,10 @@ mod test {
             s_2.add_transition((one, None));
             s_1.add_transition((one, Some(s_0))); //s_1 has no transition on the zero symbol.
 
-            NonNull::new(s_0 as *mut CompleteState<Binary>).unwrap()
+            s_0
         };
 
-        let dfa = Dfa::<Binary, CompleteState<Binary>>::new(arena, start_node);
+        let dfa = Dfa::<Binary, CompleteState<Binary>>::new(start_node);
 
         dfa.simulate_slice(&[one,zero,zero,one]);
     }
@@ -382,10 +379,10 @@ mod test {
             s_1.add_transition(('1', Some(s_0)));
             s_1.add_transition(('0',Some(s_2)));
             
-            NonNull::new(s_0 as *mut PartialState<char>).unwrap()
+            s_0
         };
 
-        let dfa = Dfa::<char, PartialState<char>>::new(arena, start_node);
+        let dfa = Dfa::<char, PartialState<char>>::new(start_node);
 
         assert!(dfa.simulate_iter(vec!['1','0','0','1'].into_iter()));
 

@@ -25,17 +25,18 @@ pub fn main() {
         let s_4 = new_state!(true);
         s_3.push_transition(Some(0), Some(s_4));
         s_3.push_transition(Some(1), Some(s_4));
-        NonNull::new(s_0).unwrap()
+        
+        s_0
     };
 
-    let nfa = Nfa::new(arena, start_node);
+    let nfa = Nfa::new(start_node);
     let mut test = vec![1; 30_000_000];
     test.extend([0,0,0]);
 
     let start = Instant::now();
-    assert_eq!(nfa.simulate_slice(&test),true);
+    assert_eq!(nfa.simulate_slice_friendly(&test),true);
     test.push(1);
-    assert_eq!(nfa.simulate_slice(&test),false);
+    assert_eq!(nfa.simulate_slice_friendly(&test),false);
 
     println!("Big Input {:?}", start.elapsed());
 }
