@@ -4,117 +4,31 @@ use std::ptr::NonNull;
 use std::hash::Hash;
 use smallvec::{Array, SmallVec};
 
-// pub trait NfaState<Σ: Eq + Hash + Copy> {
-//     fn set_accept(&mut self, is_accept: bool);
-//     //fn get_transitions(&self, symbol: Option<Σ>) -> Option<Iter<Item = (&dyn NfaState)>>;
-// }
-
-
-// pub struct DynamicState<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> 
-// where 
-//     [Option<NonNull<dyn NfaState<Σ>>>; TARGETS_HINT]: Array<Item = Option<NonNull<dyn NfaState<Σ>>>>
-// {
-//     transitions: Map<Option<Σ>, SmallVec<[Option<NonNull<dyn NfaState<Σ>>>; TARGETS_HINT]>>,
-//     is_accept: bool,
-// }
-
-// impl<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> NfaState<Σ> for DynamicState<TARGETS_HINT, Σ> 
-// where 
-//     [Option<NonNull<dyn NfaState<Σ>>>; TARGETS_HINT]: Array<Item = Option<NonNull<dyn NfaState<Σ>>>>,
-// {
-//     fn set_accept(&mut self, is_accept: bool) {
-//         self.is_accept = is_accept;
-//     }
-// }
-
-// struct DynamicIter<'a, Σ: Eq + Hash + Copy> 
-// {
-//     _self: &'a dyn NfaState<Σ>,
-//     transitions_vec: &'a [Option<NonNull<dyn NfaState<Σ>>>],
-//     index: usize,
-// }
-
-// impl <'a, Σ: Eq + Hash + Copy> Iterator for DynamicIter<'a, Σ> {
-//     type Item = &'a dyn NfaState<Σ>;
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.index >= self.transitions_vec.len() {
-//             return None;
-//         } else {
-//             let next = match self.transitions_vec[self.index] {
-//                 Some(target) => {
-//                     Some(unsafe { target.as_ref() })
-//                 },
-//                 None => {
-//                     Some(self._self as &dyn NfaState<Σ>)
-//                 }
-//             };
-//             self.index += 1;
-//             next
-//         }
-//     }
-// }
-
-// impl<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> DynamicState<TARGETS_HINT, Σ> 
-// where 
-//     [Option<NonNull<dyn NfaState<Σ>>>; TARGETS_HINT]: Array<Item = Option<NonNull<dyn NfaState<Σ>>>>
-// {
-//     pub fn new() -> Self {
-//         Self {
-//             transitions: Map::new(),
-//             is_accept: false,
-//         }
-//     }
-
-//     pub fn push_transition(&mut self, (symbol, target): (Option<Σ>, Option<NonNull<dyn NfaState<Σ>>>)) {
-//         let vec = match self.transitions.get_mut(&symbol) {
-//             Some(existing) => existing,
-//             None => {
-//                 self.transitions.insert(symbol, SmallVec::new());
-//                 self.transitions.get_mut(&symbol).unwrap()
-//             }
-//         };
-
-//         vec.push(target);
-//     }
-
-//     pub fn set_accept(&mut self, is_accept: bool) {
-//         self.is_accept = is_accept;
-//     }
-
-//     pub fn get_transitions<'a>(&'a self, symbol: Option<Σ>) -> DynamicIter<'a, Σ> {
-//         DynamicIter {
-//             _self: self,
-//             transitions_vec: self.transitions.get(&symbol).map(|smallvec| smallvec.as_slice()).unwrap_or(&[]),
-//             index: 0,
-//         }
-//     }
-// }
-
+// MARK: State
 /// A state in the NFA, optimized for NFA which mostly contain nodes with small number of transitions. If a node has more than 'TARGETS_HINT' transitions on a given symbol, the target list will be heap allocated.
-pub struct HomoState<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> 
+pub struct State<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> 
 where 
-    [NonNull<HomoState<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<HomoState<TARGETS_HINT, Σ>>>,
+    [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
-    transitions: Map<Option<Σ>, SmallVec<[NonNull<HomoState<TARGETS_HINT, Σ>>; TARGETS_HINT]>>,
+    transitions: Map<Option<Σ>, SmallVec<[NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]>>,
     is_accept: bool,
 }
 
 /// An iterator over the targets of the transitions from a state for a given symbol.
 pub struct HomoIter<'a, const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> 
 where 
-    [NonNull<HomoState<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<HomoState<TARGETS_HINT, Σ>>>,
+    [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
-    _self: &'a HomoState<TARGETS_HINT, Σ>,
-    transitions_vec: &'a [NonNull<HomoState<TARGETS_HINT, Σ>>],
+    _self: &'a State<TARGETS_HINT, Σ>,
+    transitions_vec: &'a [NonNull<State<TARGETS_HINT, Σ>>],
     index: usize,
 }
 
 impl <'a, const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> Iterator for HomoIter<'a, TARGETS_HINT, Σ> 
 where 
-    [NonNull<HomoState<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<HomoState<TARGETS_HINT, Σ>>>,
+    [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
-    type Item = &'a HomoState<TARGETS_HINT, Σ>;
+    type Item = &'a State<TARGETS_HINT, Σ>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.transitions_vec.len() {
@@ -127,9 +41,9 @@ where
     }
 }
 
-impl<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> HomoState<TARGETS_HINT, Σ> 
+impl<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy> State<TARGETS_HINT, Σ> 
 where
-    [NonNull<HomoState<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<HomoState<TARGETS_HINT, Σ>>>,
+    [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
     /// Creates a new state with no transitions and not accepting.
     pub fn new() -> Self {
@@ -201,16 +115,16 @@ macro_rules! dynamic_state_creator {
 
 /// Creates a macro for creating states in the NFA.
 #[macro_export]
-macro_rules! homo_state_creator {
+macro_rules! nfa_state_creator {
     (($d: tt), $func_name: ident, $arena: expr, $symbol: ty, $TARGETS_HINT: expr) => {
         macro_rules! $func_name {
             ($d($is_accept:expr $d(,$transitions: expr)?)? ) => {
                 {
-                    let new_state = $arena.alloc(HomoState::<$TARGETS_HINT, $symbol>::new());
+                    let new_state = $arena.alloc(State::<$TARGETS_HINT, $symbol>::new());
                     $d(
                         new_state.set_accept($is_accept);
                         $d(
-                            let transitions: &[(_, Option<&HomoState::<$TARGETS_HINT, $symbol>>)] = $transitions;
+                            let transitions: &[(_, Option<&State::<$TARGETS_HINT, $symbol>>)] = $transitions;
                             transitions.iter().for_each(|&(symbol, target)| new_state.push_transition(symbol, target));
                         )?
                     )?
@@ -221,19 +135,20 @@ macro_rules! homo_state_creator {
     }
 }
 
+// MARK: NFA
 /// A non-deterministic fintie automaton.
 pub struct Nfa<T> {
     _arena: Corrida,
     start_node: NonNull<T>
 }
 
-impl<const TARGETS_HINT:usize, Σ: Eq + Hash + Copy>  Nfa<HomoState<TARGETS_HINT, Σ>> 
+impl<const TARGETS_HINT:usize, Σ: Eq + Hash + Copy>  Nfa<State<TARGETS_HINT, Σ>> 
 where 
-    [NonNull<HomoState<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<HomoState<TARGETS_HINT, Σ>>>,
+    [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
     /// Creates a new NFA with the given start node, consumes the arena where the nodes were made.
     /// TODO: This can just take any arena, and then we would be able to change the NFA after creation. is that a good idea?
-    pub fn new(arena: Corrida, start_node: NonNull<HomoState<TARGETS_HINT, Σ>>) -> Self {
+    pub fn new(arena: Corrida, start_node: NonNull<State<TARGETS_HINT, Σ>>) -> Self {
         Self {
             _arena: arena,
             start_node
@@ -242,8 +157,8 @@ where
 
     /// Simulates the NFA on the given input, returning if the NFA accepts the input.
     pub fn simulate_iter(&self, input: impl Iterator<Item = Σ>) -> bool {
-        let mut current_states: SmallVec<[&HomoState<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(unsafe { self.start_node.as_ref() }, 1);
-        let mut next_states: SmallVec<[&HomoState<TARGETS_HINT, Σ>; 32]> = SmallVec::new();
+        let mut current_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(unsafe { self.start_node.as_ref() }, 1);
+        let mut next_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::new();
 
         let mut i = 0;
         while i < current_states.len() {
@@ -264,12 +179,15 @@ where
             }
 
             let mut i = 0;
+            println!("next_states: {:?}", next_states.len());
             while i < next_states.len() {
+                
                 for next in next_states[i].get_transitions(None) {
                     next_states.push(next);
                 }
                 i += 1;
             }
+            println!("next_states_after_epsilon: {:?}", next_states.len());
             (current_states, next_states) = (next_states, SmallVec::new());
         }
 
@@ -295,7 +213,7 @@ mod test {
     fn test_homo() {
         let arena = Corrida::new();
 
-        homo_state_creator!(($), new_state, arena, char, 2);
+        nfa_state_creator!(($), new_state, arena, char, 2);
 
         let start_node = {
             let s_0 = new_state!();
@@ -327,7 +245,7 @@ mod test {
     #[test]
     pub fn test_big() {
         let arena = Corrida::new();
-        homo_state_creator!(($), new_state, arena, u8, 2);
+        nfa_state_creator!(($), new_state, arena, u8, 2);
 
         let start_node = {
             let s_0 = new_state!(false, &[(Some(1), None), (Some(0), None)]);

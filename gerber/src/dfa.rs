@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 use hashbrown::HashMap;
+use smallmap::Map;
 
 
 use corrida::*;
@@ -24,7 +25,7 @@ pub trait State<Σ:Eq + Hash + Copy> {
 
 /// A node in the DFA, this version uses a hashmap is intended to be used when constructing a partial DFA.
 pub struct PartialState<Σ: Eq + Hash + Copy> {
-    transitions: HashMap<Σ, NonNull<PartialState<Σ>>>,
+    transitions: Map<Σ, NonNull<PartialState<Σ>>>,
     is_accept: bool
 }
 
@@ -33,7 +34,7 @@ impl<Σ:Eq + Hash + Copy> PartialState<Σ> {
     /// Creates a new PartialState with an empty hashmap and is_accept set to false.
     pub fn new() -> Self {
         Self {
-            transitions: HashMap::new(),
+            transitions: Map::new(),
             is_accept: false
         }
     }
@@ -151,8 +152,7 @@ impl<Σ:Eq + Hash + Copy> Dfa<Σ, PartialState<Σ>>{
             if let Some(next) = cur.get_transition(symbol) {
                 cur = next;
             } else {
-                // Transition did not exist, DFA error
-                panic!("Transition not provided from current node on the symbol.")
+                return false;
             }
         }
         cur.is_accept()
@@ -191,7 +191,7 @@ impl<Σ:Eq + Hash + Copy + Indexable> Dfa<Σ, CompleteState<Σ>>{
 
 /// A macro for which allows you to make a state creator function for a given state type.
 #[macro_export]
-macro_rules! state_creator {
+macro_rules! dfa_state_creator {
     (($d:tt), $func_name: ident, $arena: expr, $state_type: ty) => {
         macro_rules! $func_name {
             ($d($is_accept:expr $d(,$transitions: expr)?)? ) => {
@@ -222,7 +222,7 @@ mod test {
     pub fn test_basics() {
         let arena = Corrida::new();
 
-        state_creator!(($), new_state, arena, PartialState<char>);
+        dfa_state_creator!(($), new_state, arena, PartialState<char>);
         let start_node = {
             let s_0 = new_state!(true);
             let s_1 = new_state!();
@@ -250,11 +250,11 @@ mod test {
 
     #[test]
     fn test_big_string() {
-        let start = std::time::Instant::now();
+
 
         let arena = Corrida::new();
 
-        state_creator!(($), new_state, arena, PartialState<char>);
+        dfa_state_creator!(($), new_state, arena, PartialState<char>);
 
         let start_node = {
             let s_0 = new_state!(true);
@@ -272,13 +272,13 @@ mod test {
 
         let mut test_vec = Vec::new();
 
-        for _ in 0..1_000_000 {
+        for _ in 0..10_000_000 {
             test_vec.push('1');
             test_vec.push('0');
             test_vec.push('0');
             test_vec.push('1');
         }
-
+        let start = std::time::Instant::now();
         assert_eq!(dfa.simulate_slice(&test_vec),true);
 
         println!("Partial: {:?}", start.elapsed());
@@ -307,10 +307,9 @@ mod test {
         const ONE:Binary = Binary { index: 1 };
         const ZERO:Binary = Binary { index: 0 };
 
-        let start = std::time::Instant::now();
-
-        state_creator!(($), new_state, arena, CompleteState<Binary>);
-
+        
+        dfa_state_creator!(($), new_state, arena, CompleteState<Binary>);
+        
         let start_node = {
             let s_0 = new_state!(true);
             let s_1 = new_state!();
@@ -326,16 +325,17 @@ mod test {
         let dfa = Dfa::<Binary, CompleteState<Binary>>::new(arena, start_node);
 
         let mut test_vec = Vec::new();
-
-        for _ in 0..1_000_000 {
+        
+        for _ in 0..10_000_000 {
             test_vec.push(ONE);
             test_vec.push(ZERO);
             test_vec.push(ZERO);
             test_vec.push(ONE);
         }
-
+        let start = std::time::Instant::now();
+        
         assert_eq!(dfa.simulate_slice(&test_vec),true);
-
+        
         println!("Compelte: {:?}", start.elapsed());
     }
 
@@ -343,23 +343,27 @@ mod test {
     #[should_panic]
     fn test_dfa_missing_transition() {
         let arena = Corrida::new();
-        let start_node = {
-            let s_0 = arena.alloc(PartialState::new());
-            s_0.set_accept(true);
-            let s_1 = arena.alloc(PartialState::new());
-            s_0.add_transition(('0', None));
-            s_0.add_transition(('1',Some(s_1)));
-            let s_2 = arena.alloc(PartialState::new());
-            s_2.add_transition(('0', Some(s_1)));
-            s_2.add_transition(('1', None));
-            s_1.add_transition(('1', Some(s_0))); //s_1 has no transition on the '0' symbol.
 
-            NonNull::new(s_0 as *mut PartialState<char>).unwrap()
+        dfa_state_creator!(($), new_state, arena, CompleteState<Binary>);
+        let one = Binary { index: 1 };
+        let zero = Binary { index: 0 };
+
+        let start_node = {
+            let s_0 = new_state!(true);
+            let s_1 = new_state!();
+            s_0.add_transition((zero, None));
+            s_0.add_transition((one,Some(s_1)));
+            let s_2 = new_state!(false, &[(zero, Some(s_1)), (one, None)]);
+            s_2.add_transition((zero, Some(s_1)));
+            s_2.add_transition((one, None));
+            s_1.add_transition((one, Some(s_0))); //s_1 has no transition on the zero symbol.
+
+            NonNull::new(s_0 as *mut CompleteState<Binary>).unwrap()
         };
 
-        let dfa = Dfa::<char, PartialState<char>>::new(arena, start_node);
+        let dfa = Dfa::<Binary, CompleteState<Binary>>::new(arena, start_node);
 
-        dfa.simulate_slice(&['1','0','0','1']);
+        dfa.simulate_slice(&[one,zero,zero,one]);
     }
 
     #[test]

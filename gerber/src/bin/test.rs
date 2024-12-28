@@ -2,7 +2,7 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use gerber::nfa::*;
-use gerber::homo_state_creator;
+use gerber::nfa_state_creator;
 
 
 use corrida::*;
@@ -10,7 +10,7 @@ use corrida::*;
 
 pub fn main() {
     let arena = Corrida::new();
-    homo_state_creator!(($), new_state, arena, u8, 2);
+    nfa_state_creator!(($), new_state, arena, u8, 2);
 
     let start_node = {
         let s_0 = new_state!(false, &[(Some(1), None), (Some(0), None)]);
