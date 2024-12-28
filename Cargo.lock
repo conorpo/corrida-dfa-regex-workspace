@@ -77,6 +77,7 @@ dependencies = [
  "hashbrown",
  "impls",
  "small-map",
+ "smallmap",
  "smallvec",
 ]
 
@@ -127,6 +128,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
+name = "rustc_version"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
+dependencies = [
+ "semver",
+]
+
+[[package]]
+name = "semver"
+version = "1.0.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cb6eb87a131f756572d7fb904f6e7b68633f09cca868c5df1c4b8d1a694bbba"
+
+[[package]]
 name = "small-map"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -135,6 +151,15 @@ dependencies = [
  "ahash",
  "hashbrown",
  "rustc-hash",
+]
+
+[[package]]
+name = "smallmap"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6d0205d551de9bbfea07e51ace307c7f1ca224958a3df56fef6c2cfd244c199"
+dependencies = [
+ "rustc_version",
 ]
 
 [[package]]

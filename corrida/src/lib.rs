@@ -1,7 +1,9 @@
+
 #![warn(missing_docs)]
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
 #![feature(slice_from_ptr_range)]
+#![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 
 //TODO: Check Documenation, Check Safety, Clean up Structure one last Time. Make it faster to do allocate a single object (high priority)
@@ -18,11 +20,13 @@ use std::{
     ptr::NonNull,
 };
 
-pub struct Assert<const CHECK: bool> {}
-pub trait IsTrue {}
+#[allow(dead_code)]
+struct Assert<const CHECK: bool> {}
+#[allow(dead_code)]
+trait IsTrue {}
 impl IsTrue for Assert<true> {}
 
-pub const BLOCK_MIN_ALIGN: usize = 128;
+const BLOCK_MIN_ALIGN: usize = 128;
 
 #[repr(align(128))]
 struct BlockMeta {
@@ -75,21 +79,21 @@ impl BlockMeta {
 /// Useful for many values / objects with the same lifetime.
 /// Allocates memory in large blocks all at once, mutable references to values are returned, drops only happen when the whole struct is dropped.
 /// Self references are easy because all lifetimes are garunteed to live for the whole arena.
-pub struct Corrida<const BLOCK_SIZE: usize> 
+pub struct Corrida
 {
     cur_block: Cell<NonNull<BlockMeta>>,
     _boo: PhantomData<BlockMeta>,
 }
 
 
-impl<const BLOCK_SIZE: usize> Corrida<BLOCK_SIZE> 
-where Assert<{BLOCK_SIZE % BLOCK_MIN_ALIGN == 0}>: IsTrue,
-      Assert<{BLOCK_SIZE <= (1 << 22)}> : IsTrue
+const DEFAULT_BLOCK_SIZE: usize = 1 << 12;
+
+impl Corrida
 {
     /// Creates a new arena with a block to start. Generic over the default block size in bytes.
     pub fn new() -> Self {
         Self {
-            cur_block: Cell::new(BlockMeta::new(None, BLOCK_SIZE)),
+            cur_block: Cell::new(BlockMeta::new(None, DEFAULT_BLOCK_SIZE)),
             _boo: PhantomData,
         }
     }
@@ -97,10 +101,9 @@ where Assert<{BLOCK_SIZE % BLOCK_MIN_ALIGN == 0}>: IsTrue,
     /// Allocate the given value at the current pointer in the current block.
     /// Will create a new block if the current one does not have enough free space.
     pub fn alloc<F>(&self, fighter: F) -> &mut F 
-        where [(); {size_of::<F>() <= BLOCK_SIZE} as usize]: ,
-              [(); {BLOCK_MIN_ALIGN % align_of::<F>() == 0} as usize]: ,
     {
         let size: usize = size_of::<F>();
+
         let layout = align_of::<F>();
 
         unsafe {
@@ -108,7 +111,7 @@ where Assert<{BLOCK_SIZE % BLOCK_MIN_ALIGN == 0}>: IsTrue,
                 Ok(slot) => slot,
                 Err(_) => {
                     let old_block = NonNull::new_unchecked(self.cur_block.get().as_ptr());
-                    let mut new_block = BlockMeta::new(Some(old_block), BLOCK_SIZE);
+                    let mut new_block = BlockMeta::new(Some(old_block), DEFAULT_BLOCK_SIZE.max(size.next_power_of_two()));
 
                     self.cur_block.set(new_block);
                     // SAFETY, New Block is a valid Block
@@ -121,11 +124,10 @@ where Assert<{BLOCK_SIZE % BLOCK_MIN_ALIGN == 0}>: IsTrue,
             slot.write(fighter);
             &mut *slot
         }
-        // }
     }
 }
 
-impl<const BLOCK_SIZE: usize> Drop for Corrida<{BLOCK_SIZE}> 
+impl Drop for Corrida 
 {
     fn drop(&mut self) {
         unsafe {
@@ -170,7 +172,7 @@ mod test {
         dbg!(size_of::<BlockMeta>());
         dbg!(align_of::<BlockMeta>());
 
-        let arena = Corrida::<{1 << 16}>::new();
+        let arena = Corrida::new();
         {
             let a = arena.alloc(1);
             let b = arena.alloc(2);
@@ -186,7 +188,7 @@ mod test {
         use std::time::*;
         // Each fighter is 4*16, 64 bytes
         let start = Instant::now();
-        let arena = Corrida::<{1 << 20}>::new();
+        let arena = Corrida::new();
         for i in 0..5_000_000 {
             let _my_ref = arena.alloc([i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i]);
             black_box(_my_ref);
@@ -196,12 +198,12 @@ mod test {
 
     #[test]
     fn test_mixed() {
-        let arena = Corrida::<{1 << 16}>::new();
+        let arena = Corrida::new();
 
         let arr = arena.alloc([1; 100]);
         let char = arena.alloc('c');
         let i32 = arena.alloc(1);
-        let arena_inside_arena = arena.alloc(Corrida::<{1 << 12}>::new());
+        let arena_inside_arena = arena.alloc(Corrida::new());
 
         arena_inside_arena.alloc(*arr);
         arena_inside_arena.alloc(*char);

@@ -31,7 +31,7 @@ pub mod binary_tree {
     /// An API for construction and traversal of Binary Trees.
     /// No backreferences
     pub struct BinaryTree<'a, T: Copy> {
-        nodes: Corrida::<4096>,
+        nodes: Corrida,
         root: Cell<Option<&'a BinaryTreeNode<'a, T>>>
     }
 
@@ -40,19 +40,20 @@ pub mod binary_tree {
         /// Creates a new binary tree.
         pub fn new() -> Self {
             Self {
-                nodes: Corrida::<4096>::new(),
+                nodes: Corrida::new(),
                 root: Cell::new(None)
             }
         }
 
         /// Inserts a node
         pub fn insert_node(&self, node_data: T) -> &mut BinaryTreeNode<'a, T> 
-        where [(); {size_of::<BinaryTreeNode<'_, T>>() <= 4096} as usize]: ,
-              [(); {BLOCK_MIN_ALIGN % align_of::<BinaryTreeNode<'_, T>>() == 0} as usize]: ,
+        where [(); 4096 - size_of::<BinaryTreeNode<'_, T>>()]: ,
+              [(); {BLOCK_MIN_ALIGN % align_of::<BinaryTreeNode<'_, T>>() == 0} as usize - 1]: ,
         {
             self.nodes.alloc(BinaryTreeNode::new(node_data))
         }
 
+        /// Iterates over the binary tree, using 'inorder'.
         pub fn iter_in_order(&self) -> IterInOrder<'a, T> {
             let mut cur_path = Vec::new();
 
@@ -73,7 +74,8 @@ pub mod binary_tree {
         // }
     }
 
-    struct IterInOrder<'a, T: Copy> {
+    /// An iterator that traverses the binary tree 'inorder'.
+    pub struct IterInOrder<'a, T: Copy> {
         cur_path: Vec<(&'a BinaryTreeNode<'a, T>, bool)>, // Bool if we've already done that node
 
     }
@@ -120,7 +122,7 @@ pub mod binary_tree {
 
         #[test]
         fn test_right_line() {
-            let mut tree = BinaryTree::new();
+            let tree = BinaryTree::new();
 
             // Make root
             let mut cur: &BinaryTreeNode<i32> = tree.insert_node(0);
@@ -141,7 +143,7 @@ pub mod binary_tree {
 
         #[test]
         fn test_left_line() {
-            let mut tree = BinaryTree::new();
+            let tree = BinaryTree::new();
 
             // Make root
             let mut cur: &BinaryTreeNode<i32> = tree.insert_node(0);

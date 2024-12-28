@@ -1,6 +1,4 @@
 [workspace]
-
-
 resolver = "2"
 
 members = [
@@ -8,3 +6,6 @@ members = [
     "gerber",
     "amazon-interview-redemption-regex-parser"
 ]
+
+[profile.release]
+debug = true
