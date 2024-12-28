@@ -1,16 +1,7 @@
 #![warn(missing_docs)]
 #![feature(allocator_api)]
-#![feature(const_trait_impl)]
-#![feature(ptr_metadata)]
 #![feature(slice_ptr_get)]
-#![feature(adt_const_params)]
-#![feature(new_uninit)]
-#![feature(cell_update)]
-#![feature(maybe_uninit_as_bytes)]
-#![feature(maybe_uninit_fill)]
-#![feature(maybe_uninit_uninit_array)]
 #![feature(slice_from_ptr_range)]
-#![feature(alloc_layout_extra)]
 #![feature(generic_const_exprs)]
 
 //TODO: Check Documenation, Check Safety, Clean up Structure one last Time. Make it faster to do allocate a single object (high priority)
@@ -27,11 +18,11 @@ use std::{
     ptr::NonNull,
 };
 
-enum Assert<const CHECK: bool> {}
-trait IsTrue {}
+pub struct Assert<const CHECK: bool> {}
+pub trait IsTrue {}
 impl IsTrue for Assert<true> {}
 
-const BLOCK_MIN_ALIGN: usize = 128;
+pub const BLOCK_MIN_ALIGN: usize = 128;
 
 #[repr(align(128))]
 struct BlockMeta {
@@ -42,21 +33,16 @@ struct BlockMeta {
 }
 
 impl BlockMeta {
-    fn new<const BLOCK_SIZE: usize>(prev: Option<NonNull<BlockMeta>>) -> NonNull<Self>
-    where
-        Assert<{ BLOCK_SIZE %BLOCK_MIN_ALIGN == 0 }>: IsTrue,
-        [(); BLOCK_SIZE + BLOCK_MIN_ALIGN * 2]:,
+    fn new(prev: Option<NonNull<BlockMeta>>, block_size: usize) -> NonNull<Self>
     {
         //SAFETY,
         unsafe {
             //SAFETY, align is nonzero power of two, size + a little meta is still
-            let layout = const {
-                Layout::from_size_align_unchecked(BLOCK_SIZE + size_of::<Self>(), BLOCK_MIN_ALIGN)
-            };
+            let layout = Layout::from_size_align_unchecked(block_size + size_of::<Self>(), BLOCK_MIN_ALIGN);
             let ptr = Global.allocate(layout).unwrap().as_mut_ptr();
 
             // SAFETY, ptr will now be at the end of the data, at the start of metadata with exactly the size needed left
-            let metadata_nn = { NonNull::new_unchecked(ptr.add(BLOCK_SIZE) as *mut Self) };
+            let metadata_nn = { NonNull::new_unchecked(ptr.add(block_size) as *mut Self) };
             metadata_nn.write(BlockMeta {
                 prev,
                 block_start: NonNull::new_unchecked(ptr),
@@ -89,28 +75,31 @@ impl BlockMeta {
 /// Useful for many values / objects with the same lifetime.
 /// Allocates memory in large blocks all at once, mutable references to values are returned, drops only happen when the whole struct is dropped.
 /// Self references are easy because all lifetimes are garunteed to live for the whole arena.
-pub struct Corrida<const BLOCK_SIZE: usize = { 1 << 16 }> {
+pub struct Corrida<const BLOCK_SIZE: usize> 
+{
     cur_block: Cell<NonNull<BlockMeta>>,
     _boo: PhantomData<BlockMeta>,
 }
 
-impl<const BLOCK_SIZE: usize> Corrida<BLOCK_SIZE>
-where
-    Assert<{ BLOCK_SIZE % BLOCK_MIN_ALIGN == 0 }>: IsTrue,
-    [(); BLOCK_SIZE + BLOCK_MIN_ALIGN * 2]:,
+
+impl<const BLOCK_SIZE: usize> Corrida<BLOCK_SIZE> 
+where Assert<{BLOCK_SIZE % BLOCK_MIN_ALIGN == 0}>: IsTrue,
+      Assert<{BLOCK_SIZE <= (1 << 22)}> : IsTrue
 {
     /// Creates a new arena with a block to start. Generic over the default block size in bytes.
     pub fn new() -> Self {
         Self {
-            cur_block: Cell::new(BlockMeta::new(None)),
+            cur_block: Cell::new(BlockMeta::new(None, BLOCK_SIZE)),
             _boo: PhantomData,
         }
     }
 
     /// Allocate the given value at the current pointer in the current block.
     /// Will create a new block if the current one does not have enough free space.
-    pub fn alloc<F>(&self, fighter: F) -> &mut F {
-        //let mut cur_offset = self.cur_offset.get();
+    pub fn alloc<F>(&self, fighter: F) -> &mut F 
+        where [(); {size_of::<F>() <= BLOCK_SIZE} as usize]: ,
+              [(); {BLOCK_MIN_ALIGN % align_of::<F>() == 0} as usize]: ,
+    {
         let size: usize = size_of::<F>();
         let layout = align_of::<F>();
 
@@ -119,7 +108,7 @@ where
                 Ok(slot) => slot,
                 Err(_) => {
                     let old_block = NonNull::new_unchecked(self.cur_block.get().as_ptr());
-                    let mut new_block = BlockMeta::new(Some(old_block));
+                    let mut new_block = BlockMeta::new(Some(old_block), BLOCK_SIZE);
 
                     self.cur_block.set(new_block);
                     // SAFETY, New Block is a valid Block
@@ -136,7 +125,8 @@ where
     }
 }
 
-impl<const BLOCK_SIZE: usize> Drop for Corrida<BLOCK_SIZE> {
+impl<const BLOCK_SIZE: usize> Drop for Corrida<{BLOCK_SIZE}> 
+{
     fn drop(&mut self) {
         unsafe {
             let mut cur_block_nn = self.cur_block.get();
@@ -180,7 +170,7 @@ mod test {
         dbg!(size_of::<BlockMeta>());
         dbg!(align_of::<BlockMeta>());
 
-        let arena = Corrida::<{ 1 << 7 }>::new();
+        let arena = Corrida::<{1 << 16}>::new();
         {
             let a = arena.alloc(1);
             let b = arena.alloc(2);
@@ -196,7 +186,7 @@ mod test {
         use std::time::*;
         // Each fighter is 4*16, 64 bytes
         let start = Instant::now();
-        let arena = Corrida::<{ 1 << 20 }>::new();
+        let arena = Corrida::<{1 << 20}>::new();
         for i in 0..5_000_000 {
             let _my_ref = arena.alloc([i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i]);
             black_box(_my_ref);
@@ -206,12 +196,12 @@ mod test {
 
     #[test]
     fn test_mixed() {
-        let arena = Corrida::<{ 1 << 16 }>::new();
+        let arena = Corrida::<{1 << 16}>::new();
 
         let arr = arena.alloc([1; 100]);
         let char = arena.alloc('c');
         let i32 = arena.alloc(1);
-        let arena_inside_arena = arena.alloc(Corrida::<4096>::new());
+        let arena_inside_arena = arena.alloc(Corrida::<{1 << 12}>::new());
 
         arena_inside_arena.alloc(*arr);
         arena_inside_arena.alloc(*char);

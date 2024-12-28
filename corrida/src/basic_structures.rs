@@ -4,7 +4,7 @@
 pub mod binary_tree {
     use std::cell::Cell;
 
-    use crate::Corrida;
+    use crate::*;
     /// A node in the tree, does not have a reference to its parent
     pub struct BinaryTreeNode<'a, T: Copy> {
         /// Data associated with node
@@ -31,7 +31,7 @@ pub mod binary_tree {
     /// An API for construction and traversal of Binary Trees.
     /// No backreferences
     pub struct BinaryTree<'a, T: Copy> {
-        nodes: Corrida<65536>,
+        nodes: Corrida::<4096>,
         root: Cell<Option<&'a BinaryTreeNode<'a, T>>>
     }
 
@@ -40,13 +40,16 @@ pub mod binary_tree {
         /// Creates a new binary tree.
         pub fn new() -> Self {
             Self {
-                nodes: Corrida::<65536>::new(),
+                nodes: Corrida::<4096>::new(),
                 root: Cell::new(None)
             }
         }
 
         /// Inserts a node
-        pub fn insert_node(&'a self, node_data: T) -> &'a mut BinaryTreeNode<'a, T> {
+        pub fn insert_node(&self, node_data: T) -> &mut BinaryTreeNode<'a, T> 
+        where [(); {size_of::<BinaryTreeNode<'_, T>>() <= 4096} as usize]: ,
+              [(); {BLOCK_MIN_ALIGN % align_of::<BinaryTreeNode<'_, T>>() == 0} as usize]: ,
+        {
             self.nodes.alloc(BinaryTreeNode::new(node_data))
         }
 
@@ -83,7 +86,7 @@ pub mod binary_tree {
                 return None;
             }
 
-            let (ref node, visited) = self.cur_path.last_mut().unwrap();
+            let (node, visited) = self.cur_path.last_mut().unwrap();
             let data = node.data.get();
 
             *visited = true;
