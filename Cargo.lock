@@ -24,8 +24,7 @@ checksum = "5c6cb57a04249c6480766f7f7cef5467412af1490f8d1e243141daddada3264f"
 name = "amazon-interview-redemption-regex-parser"
 version = "0.1.0"
 dependencies = [
- "corrida 0.1.0",
- "gerber",
+ "corrida 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec",
 ]
 
