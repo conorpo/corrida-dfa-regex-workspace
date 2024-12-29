@@ -2,6 +2,8 @@
 name = "corrida"
 version = "0.1.0"
 edition = "2024"
+description = "Heterogenous Arena Allocator"
+license = "MIT"
 
 [lib]
 path = "src/lib.rs"

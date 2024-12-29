@@ -2,6 +2,8 @@
 name = "amazon-interview-redemption-regex-parser"
 version = "0.1.0"
 edition = "2021"
+description = "Minimal Regex Parser using Thompson's Construction and optionall DFA conversion"
+license = "MIT"
 
 [lib]
 path = "src/lib.rs"

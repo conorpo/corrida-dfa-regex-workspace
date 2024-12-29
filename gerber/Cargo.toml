@@ -2,6 +2,8 @@
 name = "gerber"
 version = "0.1.0"
 edition = "2024"
+description = "Finite State Automato construction and execution"
+license = "MIT"
 
 [lib]
 path = "src/lib.rs"

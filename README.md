@@ -1,3 +1,5 @@
+All packages are open source under the MIT license.
+
 ### corrida
 A simple typed arena, dynamically growable, or you can update the capacity beforehand. Supports cylic references.
 
