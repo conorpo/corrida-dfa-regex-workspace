@@ -2,11 +2,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
-use hashbrown::HashMap;
 use smallmap::Map;
-
-
-use corrida::*;
 
 /// A node in the DFA, contains is_accept and a transition hashmap. MARK: State
 pub trait State<Σ:Eq + Hash + Copy> {
@@ -54,7 +50,7 @@ impl<Σ:Eq + Hash + Copy> State<Σ> for PartialState<Σ>
     
     /// Inserts the provided transitions into this vertex'es hashmap. None represents a self-transition.
     fn add_transition(&mut self, transition: (Σ, Option<&PartialState<Σ>>)){  
-        let vert_ref = transition.1.or(Some(self)).unwrap() as *const PartialState<Σ> as *mut PartialState<Σ>;
+        let vert_ref = transition.1.unwrap_or(self) as *const PartialState<Σ> as *mut PartialState<Σ>;
         self.transitions.insert(transition.0, NonNull::new(vert_ref).unwrap());
     }
 
@@ -105,7 +101,7 @@ impl<Σ:Eq + Hash + Copy + Indexable> State<Σ> for CompleteState<Σ> {
     
     /// Inserts the provided transitions into this vertex'es hashmap. None represents a self-transition.
     fn add_transition(&mut self, transition: (Σ, Option<&CompleteState<Σ>>)){  
-        let vert_ref = transition.1.or(Some(self)).unwrap() as *const CompleteState<Σ> as *mut CompleteState<Σ>;
+        let vert_ref = transition.1.unwrap_or(self) as *const CompleteState<Σ> as *mut CompleteState<Σ>;
         self.transitions[transition.0.get_index()] = Some(NonNull::new(vert_ref).unwrap());
     }
 
@@ -213,11 +209,11 @@ macro_rules! dfa_state_creator {
 mod test {
     #![macro_use]
     use super::*;
-    use std::ptr::NonNull;
+    use corrida::Corrida;
 
     #[test]
     pub fn test_basics() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
 
         dfa_state_creator!(($), new_state, arena, PartialState<char>);
         let start_node = {
@@ -241,15 +237,15 @@ mod test {
         };
 
         let dfa = Dfa::<char, PartialState<char>>::new(start_node);
-        assert_eq!(dfa.simulate_slice(&"1001".chars().collect::<Vec<char>>()), true);
-        assert_eq!(dfa.simulate_slice(&"1000".chars().collect::<Vec<char>>()), false);
+        assert!(dfa.simulate_slice(&"1001".chars().collect::<Vec<char>>()));
+        assert!(!dfa.simulate_slice(&"1000".chars().collect::<Vec<char>>()));
     }
 
     #[test]
     fn test_big_string() {
 
 
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
 
         dfa_state_creator!(($), new_state, arena, PartialState<char>);
 
@@ -276,7 +272,7 @@ mod test {
             test_vec.push('1');
         }
         let start = std::time::Instant::now();
-        assert_eq!(dfa.simulate_slice(&test_vec),true);
+        assert!(dfa.simulate_slice(&test_vec));
 
         println!("Partial: {:?}", start.elapsed());
     }
@@ -300,7 +296,7 @@ mod test {
 
     #[test]
     fn test_big_string_complete() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
         const ONE:Binary = Binary { index: 1 };
         const ZERO:Binary = Binary { index: 0 };
 
@@ -331,7 +327,7 @@ mod test {
         }
         let start = std::time::Instant::now();
         
-        assert_eq!(dfa.simulate_slice(&test_vec),true);
+        assert!(dfa.simulate_slice(&test_vec));
         
         println!("Compelte: {:?}", start.elapsed());
     }
@@ -339,7 +335,7 @@ mod test {
     #[test]
     #[should_panic]
     fn test_dfa_missing_transition() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
 
         dfa_state_creator!(($), new_state, arena, CompleteState<Binary>);
         let one = Binary { index: 1 };
@@ -365,7 +361,7 @@ mod test {
 
     #[test]
     fn test_dfa_repeated_transitions() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
 
         let start_node = {
             let s_0 = arena.alloc(PartialState::new());

@@ -4,7 +4,7 @@ pub fn main() {
     use std::time::*;
     // Each fighter is 4*16, 64 bytes
     let start = Instant::now();
-    let arena = Corrida::new();
+    let arena = Corrida::new(None);
     for i in 0..5_000_000 {
         let _my_ref = arena.alloc([i,i,i,i,i,i,i,i,i,i,i,i,i,i,i,i]);
     }

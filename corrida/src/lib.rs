@@ -78,11 +78,11 @@ impl BlockMeta {
 /// One time use bump allocator.
 /// Useful for many values / objects with the same lifetime.
 /// Allocates memory in large blocks all at once, mutable references to values are returned, drops only happen when the whole struct is dropped.
-/// Self references are easy because all lifetimes are garunteed to live for the whole arena.
 pub struct Corrida
 {
     cur_block: Cell<NonNull<BlockMeta>>,
     _boo: PhantomData<BlockMeta>,
+    default_block_size: usize,
 }
 
 
@@ -90,16 +90,18 @@ const DEFAULT_BLOCK_SIZE: usize = 1 << 12;
 
 impl Corrida
 {
-    /// Creates a new arena with a block to start. Generic over the default block size in bytes.
-    pub fn new() -> Self {
+    /// Creates a new arena with a block to start.
+    pub fn new(default_block_size: Option<usize>) -> Self {
         Self {
             cur_block: Cell::new(BlockMeta::new(None, DEFAULT_BLOCK_SIZE)),
             _boo: PhantomData,
+            default_block_size: default_block_size.unwrap_or(DEFAULT_BLOCK_SIZE),
         }
     }
 
     /// Allocate the given value at the current pointer in the current block.
     /// Will create a new block if the current one does not have enough free space.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc<F>(&self, fighter: F) -> &mut F 
     {
         let size: usize = size_of::<F>();
@@ -111,7 +113,7 @@ impl Corrida
                 Ok(slot) => slot,
                 Err(_) => {
                     let old_block = NonNull::new_unchecked(self.cur_block.get().as_ptr());
-                    let mut new_block = BlockMeta::new(Some(old_block), DEFAULT_BLOCK_SIZE.max(size.next_power_of_two()));
+                    let mut new_block = BlockMeta::new(Some(old_block), self.default_block_size.max(size.next_power_of_two()));
 
                     self.cur_block.set(new_block);
                     // SAFETY, New Block is a valid Block
@@ -172,7 +174,7 @@ mod test {
         dbg!(size_of::<BlockMeta>());
         dbg!(align_of::<BlockMeta>());
 
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
         {
             let a = arena.alloc(1);
             let b = arena.alloc(2);
@@ -188,7 +190,7 @@ mod test {
         use std::time::*;
         // Each fighter is 4*16, 64 bytes
         let start = Instant::now();
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
         for i in 0..5_000_000 {
             let _my_ref = arena.alloc([i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i]);
             black_box(_my_ref);
@@ -198,12 +200,12 @@ mod test {
 
     #[test]
     fn test_mixed() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(Some(1 << 14));
 
         let arr = arena.alloc([1; 100]);
         let char = arena.alloc('c');
         let i32 = arena.alloc(1);
-        let arena_inside_arena = arena.alloc(Corrida::new());
+        let arena_inside_arena = arena.alloc(Corrida::new(None));
 
         arena_inside_arena.alloc(*arr);
         arena_inside_arena.alloc(*char);
@@ -213,7 +215,7 @@ mod test {
     #[test]
     fn test_drop() {
         for _ in 0..10_000 {
-            let arena = Corrida::new();
+            let arena = Corrida::new(None);
             for _ in 0..10_000 {
                 let _my_ref = arena.alloc(1);
             }

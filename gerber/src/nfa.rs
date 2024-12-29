@@ -1,10 +1,14 @@
 use corrida::Corrida;
 use smallmap::Map;
+use std::collections::HashMap;
 use std::{collections::HashSet, ptr::NonNull};
 use std::hash::Hash;
 use smallvec::{Array, SmallVec};
+use crate::dfa::{Dfa, PartialState, State as DfaState};
+use crate::dfa_state_creator;
 
-use crate::dfa::{Dfa, PartialState};
+
+type Transitions<const TARGETS_HINT: usize, Σ> = SmallVec<[NonNull<State<{TARGETS_HINT}, Σ>>; TARGETS_HINT]>;
 
 // MARK: State
 /// A state in the NFA, optimized for NFA which mostly contain nodes with small number of transitions. If a node has more than 'TARGETS_HINT' transitions on a given symbol, the target list will be heap allocated.
@@ -12,7 +16,7 @@ pub struct State<const TARGETS_HINT: usize, Σ: Eq + Hash + Copy>
 where 
     [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
-    transitions: Map<Option<Σ>, SmallVec<[NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]>>,
+    transitions: Map<Option<Σ>, Transitions<TARGETS_HINT, Σ>>,
     is_accept: bool,
 }
 
@@ -34,7 +38,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.transitions_vec.len() {
-            return None;
+            None
         } else {
             let next = unsafe { self.transitions_vec[self.index].as_ref() };
             self.index += 1;
@@ -48,10 +52,10 @@ where
     [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
 {
     /// Creates a new state with no transitions and not accepting.
-    pub fn new() -> Self {
+    pub fn new(is_accept: bool) -> Self {
         Self {
             transitions: Map::new(),
-            is_accept: false,
+            is_accept,
         }
     }
 
@@ -79,7 +83,7 @@ where
     }
 
     /// Returns an iterator over the transitions for the given symbol.
-    pub fn get_transitions<'a>(&'a self, symbol: Option<Σ>) -> HomoIter<'a, TARGETS_HINT, Σ> {
+    pub fn get_transitions(&self, symbol: Option<Σ>) -> HomoIter<'_, TARGETS_HINT, Σ> {
         HomoIter {
             _self: self,
             transitions_vec: self.transitions.get(&symbol).map(|smallvec| smallvec.as_slice()).unwrap_or(&[]),
@@ -93,28 +97,6 @@ where
     }
 }
 
-
-#[macro_export]
-macro_rules! dynamic_state_creator {
-    (($d: tt), $func_name: ident, $arena: expr, $symbol: ty) => {
-        macro_rules! $func_name {
-            ($TARGETS_HINT: expr, $d($is_accept:expr $d(,$transitions: expr)?)? ) => {
-                {
-                    let new_state = $arena.alloc::<DynamicState<$TARGETS_HINT, $symbol>>(DynamicState::new());
-                    $d(
-                        new_state.set_accept($is_accept);
-                        $d(
-                            let transitions: &[(_, Option<NonNull<DynamicState<$TARGETS_HINT, $symbol>>)] = $transitions;
-                            transitions.iter().for_each(|transition| new_state.push_transition(*transition));
-                        )?
-                    )?
-                    new_state
-                }
-            };
-        }
-    };
-}
-
 /// Creates a macro for creating states in the NFA.
 #[macro_export]
 macro_rules! nfa_state_creator {
@@ -122,9 +104,12 @@ macro_rules! nfa_state_creator {
         macro_rules! $func_name {
             ($d($is_accept:expr $d(,$transitions: expr)?)? ) => {
                 {
-                    let new_state = $arena.alloc(State::<$TARGETS_HINT, $symbol>::new());
+                    let mut accept_state = false;
                     $d(
-                        new_state.set_accept($is_accept);
+                        accept_state = $is_accept;
+                    )?
+                    let new_state = $arena.alloc(State::<$TARGETS_HINT, $symbol>::new(accept_state));
+                    $d(
                         $d(
                             let transitions: &[(_, Option<&State::<$TARGETS_HINT, $symbol>>)] = $transitions;
                             transitions.iter().for_each(|&(symbol, target)| new_state.push_transition(symbol, target));
@@ -143,6 +128,7 @@ pub struct Nfa<'a ,T> {
     start_node: &'a T,
 }
 
+type SymbolMapValue<'a, const TARGETS_HINT: usize, Σ> = (SmallVec<[&'a State<{TARGETS_HINT}, Σ>; 32]>, HashSet<*const State<TARGETS_HINT, Σ>>);
 impl<'a, const TARGETS_HINT:usize, Σ: Eq + Hash + Copy>  Nfa<'a, State<TARGETS_HINT, Σ>> 
 where 
     [NonNull<State<TARGETS_HINT, Σ>>; TARGETS_HINT]: Array<Item = NonNull<State<TARGETS_HINT, Σ>>>,
@@ -155,14 +141,22 @@ where
         }
     }
 
-    pub fn as_dfa(&self) -> Dfa<'a, Σ, PartialState<Σ>> {
+
+    //? Possibly my worst work yet.
+    /// Converts the NFA to a DFA using subset construction.
+    pub fn as_dfa(&self, arena: &Corrida) -> Dfa<'a, Σ, PartialState<Σ>> {
+        
+        dfa_state_creator!(($), new_state, arena, PartialState<Σ>);
+                
         let mut hash_map = HashMap::new();
 
-        fn set_hash(states: &[&State<TARGETS_HINT, Σ>]) -> 
+        let set_hash = |set: &SmallVec<[&State<TARGETS_HINT, Σ>; 32]>| -> Vec<*const State<TARGETS_HINT, Σ>> {
+            set.iter().map(|&r| r as *const State<TARGETS_HINT, Σ>).collect()
+        };
 
         let mut current_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(self.start_node, 1);
         let mut set: HashSet<*const State<TARGETS_HINT, Σ>> = HashSet::from([self.start_node as *const State<TARGETS_HINT, Σ>]);
-        set.reserve(32);
+
         let mut i = 0;
         while i < current_states.len() {
             let state = current_states[i];
@@ -174,16 +168,74 @@ where
             i += 1;
         }
 
+        // We have our start state now. 
+        let hash = set_hash(&current_states);
+        let mut is_accept = false;
+        for state in &current_states {
+            if state.is_accept {
+                is_accept = true;
+                break;
+            }
+        }
+        hash_map.insert(hash.clone(), (new_state!(is_accept) as *mut PartialState<Σ>, false));
+
+        
+        let mut queue = vec![(current_states, hash.clone())];
+        while let Some((subset, hash)) = queue.pop() {
+            let (my_dfa_node_ptr, processed) = hash_map.get_mut(&hash).unwrap();
+            let my_dfa_node = unsafe { my_dfa_node_ptr.as_mut().unwrap() };
+            *processed = true;
 
 
-        todo!()
+            let mut symbol_map: HashMap<Σ, SymbolMapValue<'a, TARGETS_HINT, Σ>> = HashMap::new();
+            for state in subset {
+                for (symbol, next) in state.transitions.iter().filter(|(symbol, _)| symbol.is_some()) {
+                    let (vecb, setb) = symbol_map.entry(symbol.unwrap()).or_insert((SmallVec::new(), HashSet::new()));
+                    for next in next {
+                        if setb.insert(next.as_ptr()) {
+                            vecb.push(unsafe { next.as_ref() });
+                        }
+                    }
+                }
+            }
+
+            for (vec, subset) in symbol_map.values_mut() {
+                let mut i = 0;
+                while i < vec.len() {
+                    let state = vec[i];
+                    for next in state.get_transitions(None) {
+                        if subset.insert(next as *const State<TARGETS_HINT, Σ>) {
+                            vec.push(next);
+                        }
+                    }
+                    i += 1;
+                }
+            }
+
+            for (symbol, (subset, _)) in symbol_map {
+                let hash = set_hash(&subset);
+                let mut is_accept = false;
+                for state in &subset {
+                    if state.is_accept {
+                        is_accept = true;
+                        break;
+                    }
+                }
+                let &mut (dfa_node, processed) = hash_map.entry(hash.clone()).or_insert_with(|| (new_state!(is_accept) as *mut PartialState<Σ>, false));
+                my_dfa_node.add_transition((symbol, Some(unsafe { dfa_node.as_ref().unwrap()})));
+                if !processed {
+                    queue.push((subset, hash));
+                }
+            }
+        }
+
+        Dfa::<Σ, PartialState<Σ>>::new(unsafe { hash_map.get(&hash).unwrap().0.as_ref().unwrap() })
     }
 
     /// Simulates the NFA on the given input, returning if the NFA accepts the input.
     pub fn simulate_iter(&self, input: impl Iterator<Item = Σ>) -> bool {
         let mut current_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::from_elem(self.start_node, 1);
         let mut set: HashSet<*const State<TARGETS_HINT, Σ>> = HashSet::from([self.start_node as *const State<TARGETS_HINT, Σ>]);
-        set.reserve(32);
         let mut next_states: SmallVec<[&State<TARGETS_HINT, Σ>; 32]> = SmallVec::new();
 
         let mut i = 0;
@@ -285,7 +337,7 @@ mod test {
 
     #[test]
     fn test_homo() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
 
         nfa_state_creator!(($), new_state, arena, char, 2);
 
@@ -308,51 +360,17 @@ mod test {
         };
 
         let nfa = Nfa::new(start_node);
-        assert_eq!(nfa.simulate_slice_friendly(&[]), true);
-        assert_eq!(nfa.simulate_slice_friendly(&['0','0']),true);
-        assert_eq!(nfa.simulate_slice_friendly(&['0','1']), false);
-        assert_eq!(nfa.simulate_slice_friendly(&['1','1']),true);
-        assert_eq!(nfa.simulate_slice_friendly(&['0','0','0','1','0','1','0']),true);
-        assert_eq!(nfa.simulate_slice_friendly(&['0','0','0','1','1','1','0','0']),false);
-    }
-
-    #[test]
-    pub fn test_big_friendly() {
-        let arena = Corrida::new();
-        nfa_state_creator!(($), new_state, arena, u8, 2);
-
-        let start_node = {
-            let s_0 = new_state!(false, &[(Some(1), None), (Some(0), None)]);
-            let s_1 = new_state!();
-            s_0.push_transition(Some(1), Some(s_1));
-            let s_2 = new_state!();
-            s_1.push_transition(Some(0), Some(s_2));
-            s_1.push_transition(Some(1), Some(s_2));
-            let s_3 = new_state!();
-            s_2.push_transition(Some(0), Some(s_3));
-            s_2.push_transition(Some(1), Some(s_3));
-            let s_4 = new_state!(true);
-            s_3.push_transition(Some(0), Some(s_4));
-            s_3.push_transition(Some(1), Some(s_4));
-            
-            s_0
-        };
-
-        let nfa = Nfa::new(start_node);
-        let mut test = vec![1; 1_000_000];
-        test.extend([0,0,0]);
-
-        let start = Instant::now();
-        assert_eq!(nfa.simulate_slice_friendly(&test),true);
-        test.push(1);
-        assert_eq!(nfa.simulate_slice_friendly(&test),false);
-
-        println!("Big Input Friednly {:?}", start.elapsed());
+        assert!(nfa.simulate_slice_friendly(&[]));
+        assert!(nfa.simulate_slice_friendly(&['0','0']));
+        assert!(!nfa.simulate_slice_friendly(&['0','1']));
+        assert!(nfa.simulate_slice_friendly(&['1','1']));
+        assert!(nfa.simulate_slice_friendly(&['0','0','0','1','0','1','0']));
+        assert!(!nfa.simulate_slice_friendly(&['0','0','0','1','1','1','0','0']));
     }
 
     #[test]
     pub fn test_big() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
         nfa_state_creator!(($), new_state, arena, u8, 2);
 
         let start_node = {
@@ -377,16 +395,34 @@ mod test {
         test.extend([0,0,0]);
 
         let start = Instant::now();
-        assert_eq!(nfa.simulate_slice(&test),true);
+        assert!(nfa.simulate_slice_friendly(&test));
         test.push(1);
-        assert_eq!(nfa.simulate_slice(&test),false);
+        assert!(!nfa.simulate_slice_friendly(&test));
+        let a = start.elapsed();
 
-        println!("Big Input {:?}", start.elapsed());
+        test.pop();
+
+        let start = Instant::now();
+        assert!(nfa.simulate_slice(&test));
+        test.push(1);
+        assert!(!nfa.simulate_slice(&test));
+        let b = start.elapsed();
+
+        test.pop();
+
+        let start = Instant::now();
+        let dfa = nfa.as_dfa(&arena);
+        assert!(dfa.simulate_slice(&test));
+        test.push(1);
+        assert!(!dfa.simulate_slice(&test));
+        let c = start.elapsed();
+
+        println!("Big Test -- Friendly NFA: {:?} NFA: {:?} DFA: {:?}", a, b, c);
     }
 
     #[test]
     pub fn test_loop() {
-        let arena = Corrida::new();
+        let arena = Corrida::new(None);
         nfa_state_creator!(($), new_state, arena, u8, 2);
 
         let start_node = {
@@ -406,13 +442,17 @@ mod test {
         };
 
         let nfa = Nfa::new(start_node);
-        let mut test = vec![1; 100_000];
+        let test = vec![1; 100_000];
         let start = Instant::now();
-        assert_eq!(nfa.simulate_slice(&test),true);
-        test.push(1);
-        assert_eq!(nfa.simulate_slice(&test),true);
+        assert!(nfa.simulate_slice(&test));
+        let a = start.elapsed();
 
-        println!("Epsilon Closures {:?}", start.elapsed());
+        let dfa = nfa.as_dfa(&arena);
+        let start = Instant::now();
+        assert!(dfa.simulate_slice(&test));
+        let b = start.elapsed();
+
+        println!("Loop -- NFA: {:?} DFA: {:?}", a, b);
     }
 }
 

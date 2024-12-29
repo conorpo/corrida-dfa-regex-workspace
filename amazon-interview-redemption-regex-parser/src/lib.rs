@@ -1,4 +1,5 @@
+#![warn(missing_docs)]
 //! Regex parser based on a DFA implementation
-#![feature(let_chains)]
 
+/// The regex parser
 pub mod regex;

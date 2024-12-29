@@ -2,9 +2,6 @@
 
 /// A simple binary tree implementation, with no backreferences.
 pub mod binary_tree {
-    use std::{cell::Cell, rc::Rc};
-
-    use crate::*;
     /// A node in the tree, does not have a reference to its parent
     pub struct BTree<'a, T: Copy> {
         /// Data associated with node
@@ -25,6 +22,7 @@ pub mod binary_tree {
             }
         }
 
+        /// Returns an iterator that traverses the binary tree 'inorder'.
         pub fn iter_in_order(&self) -> IterInOrder<T> {
             IterInOrder {
                 stack: vec![(self, false)]
@@ -38,7 +36,7 @@ pub mod binary_tree {
 
     }
 
-    impl<'a, T:Copy> Iterator for IterInOrder<'a, T> {
+    impl<T:Copy> Iterator for IterInOrder<'_, T> {
         type Item = T;
     
         fn next(&mut self) -> Option<Self::Item> {
@@ -61,28 +59,31 @@ pub mod binary_tree {
                 self.stack.push((right, false));
             }
 
-            return Some(last.0.data);
+            Some(last.0.data)
         }
     }
 
-    macro_rules! node_creator {
-        ($d: tt, $macro_name: ident, $arena: expr, $type: ty) => {
-            macro_rules! $macro_name {
-                ($data: expr) => {
-                    $arena.alloc(<$type>::new($data))
-                };
-            };
-        };
-    }
 
 
     #[cfg(test)]
     mod test {
         use super::*;
+        use crate::*;
+
+        macro_rules! node_creator {
+            ($d: tt, $macro_name: ident, $arena: expr, $type: ty) => {
+                macro_rules! $macro_name {
+                    ($data: expr) => {
+                        $arena.alloc(<$type>::new($data))
+                    };
+                }
+            };
+        }
+    
 
         #[test]
         fn test_line() {
-            let arena = Corrida::new();
+            let arena = Corrida::new(None);
             node_creator!($, create_node, arena, BTree<i32>);
 
             let mut cur = create_node!(1_000_000);

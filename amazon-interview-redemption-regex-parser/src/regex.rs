@@ -1,36 +1,24 @@
-use std::{iter::Peekable, ptr::NonNull, str::Chars};
+use std::{iter::Peekable, str::Chars};
 
 use corrida::Corrida;
 use gerber::{nfa::*, nfa_state_creator};
 
-// TODO: Figure out epsilon loops
-// TODO: Add escape characters
-// TODO: Support back references
-// TODO: Add . as wildcard character (ps how do we do this without creating a massive UnionState)
-/*
-    TODO: Maybe
-    - Character Classes (encode . as character class)
-    - Counted Repetition (how?)
-    - Unanchored Matches, can be added if we add .
-        - Maybe we can reuse the same final DFA to add functionality for both
-    
-*/
 type RState = State<2, char>;
-fn parse_regex<'a>(regex_string: &str, arena: &'a Corrida) -> Nfa<'a ,RState> {
+/// Parses a regex string into an NFA. Returns an error if the regex is invalid.
+pub fn parse_regex<'a>(regex_string: &str, arena: &'a Corrida) -> Result<Nfa<'a ,RState>, &'static str> {
     nfa_state_creator!(($), new_state, arena, char, 2);
     let create_state = |is_final| new_state!(is_final);
     
-    fn parse_base<'a>(cur: &'a mut RState, chars: &mut Peekable<Chars>, create_state: &impl Fn(bool) -> &'a mut State<2, char>) -> (&'a mut RState, &'a mut RState) {
-        println!("base_start: {}", chars.peek().unwrap_or(&'\0'));
-        let (mut base_start, mut base_end) = match chars.next() {
+    fn parse_base<'a>(cur: &'a mut RState, chars: &mut Peekable<Chars>, create_state: &impl Fn(bool) -> &'a mut State<2, char>) -> Result<(&'a mut RState, &'a mut RState), &'static str> {
+        let (base_start, base_end) = match chars.next() {
             Some('(') => {
-                let (start_node, end_state) = parse_group::<false>(chars, create_state);
+                let (start_node, end_state) = parse_group::<false>(chars, create_state)?;
                 cur.push_transition(None, Some(start_node));
                 (cur, end_state)
             },
             Some(c) => {
                 if c == '+' || c == '*' || c == '?' {
-                    panic!("Got an operator (+, *, ?) when there was no base to skip/repeat");
+                    return Err("Got an operator (+, *, ?) when there was no base to skip/repeat");
                 }
 
                 let new_state = create_state(false);
@@ -68,23 +56,21 @@ fn parse_regex<'a>(regex_string: &str, arena: &'a Corrida) -> Nfa<'a ,RState> {
         }
 
         if add_cycle {
-            base_end.push_transition(None, Some(&base_start));
+            base_end.push_transition(None, Some(base_start));
         }
         if add_skip {
-            base_start.push_transition(None, Some(&base_end));
+            base_start.push_transition(None, Some(base_end));
         }
 
-        println!("base done");
-        (base_start, base_end)        
+        Ok((base_start, base_end))
     }
 
-    fn parse_concat<'a>(chars: &mut Peekable<Chars>,create_state: &impl Fn(bool) -> &'a mut State<2, char>) -> (&'a mut RState, Option<&'a mut RState>) {
-        println!("concat_start: {}", chars.peek().unwrap_or(&'\0'));
+    fn parse_concat<'a>(chars: &mut Peekable<Chars>,create_state: &impl Fn(bool) -> &'a mut State<2, char>) -> Result<(&'a mut RState, Option<&'a mut RState>), &'static str> {
         let mut cur = create_state(false);
         let mut pattern_start = None;
 
-        while chars.peek() != None && chars.peek() != Some(&')') && chars.peek() != Some(&'|') {
-            let (base_start, base_end) = parse_base(cur, chars, create_state);
+        while chars.peek().is_some() && chars.peek() != Some(&')') && chars.peek() != Some(&'|') {
+            let (base_start, base_end) = parse_base(cur, chars, create_state)?;
 
             if pattern_start.is_none() {
                 pattern_start = Some(base_start);
@@ -93,22 +79,20 @@ fn parse_regex<'a>(regex_string: &str, arena: &'a Corrida) -> Nfa<'a ,RState> {
             cur = base_end;
         }
 
-        println!("concat_end: {}", chars.peek().unwrap_or(&'\0'));
-        match pattern_start {
+        Ok(match pattern_start {
             Some(start) => (start, Some(cur)),
             None => (cur, None)
-        }
+        })
     }
 
-    fn parse_group<'a, const outermost: bool>(chars: &mut Peekable<Chars>, create_state: &impl Fn(bool) -> &'a mut State<2, char>) -> (&'a mut RState, &'a mut RState) {
-        println!("group_start: {}", chars.peek().unwrap_or(&'\0'));
+    fn parse_group<'a, const OUTERMOST: bool>(chars: &mut Peekable<Chars>, create_state: &impl Fn(bool) -> &'a mut State<2, char>) -> Result<(&'a mut RState, &'a mut RState), &'static str> {
         fn add_to_union(union_start: &mut RState, union_end: &mut RState, concat_start: &mut RState, concat_end: Option<&mut RState>) {
             union_start.push_transition(None, Some(concat_start));
             let concat_end = concat_end.unwrap_or(concat_start);
-            concat_end.push_transition(None, Some(&union_end));
+            concat_end.push_transition(None, Some(union_end));
         }
 
-        let (concat_start, concat_end_opt) = parse_concat(chars, create_state);
+        let (concat_start, concat_end_opt) = parse_concat(chars, create_state)?;
 
         let (group_start, group_end) = if let Some(&'|') = chars.peek() {
             let (union_start, union_end) = (create_state(false), create_state(false));
@@ -116,7 +100,7 @@ fn parse_regex<'a>(regex_string: &str, arena: &'a Corrida) -> Nfa<'a ,RState> {
             
             loop {
                 chars.next(); // eat '|'
-                let (concat_start, concat_end_opt) = parse_concat(chars, create_state);
+                let (concat_start, concat_end_opt) = parse_concat(chars, create_state)?;
                 add_to_union(union_start, union_end, concat_start, concat_end_opt);
                 if chars.peek() != Some(&'|') { break; }
             }
@@ -132,25 +116,24 @@ fn parse_regex<'a>(regex_string: &str, arena: &'a Corrida) -> Nfa<'a ,RState> {
         };
 
         match chars.next() {
-            Some(')') if outermost => {
-                panic!("Attempted to close a group in the outermost context ( no matching '(' )");
+            Some(')') if OUTERMOST => {
+                return Err("Attempted to close a group in the outermost context ( no matching '(' )");
             },
-            None if !outermost => {
-                panic!("EOF when not all groups were closed, '(' without matching ')'");
+            None if !OUTERMOST => {
+                return Err("EOF when not all groups were closed, '(' without matching ')'");
             },
             _ => {}
         }
 
-        println!("group_end: {}", chars.peek().unwrap_or(&'\0'));
         // SAFETY, in both arms the non null comes from an exclusive reference, so all good.
-        (group_start, group_end)
+        Ok((group_start, group_end))
     }
 
     let mut chars = regex_string.chars().peekable();
-    let (start_node, end_node) = parse_group::<true>(&mut chars, &create_state);
+    let (start_node, end_node) = parse_group::<true>(&mut chars, &create_state)?;
     end_node.set_accept(true);
 
-    Nfa::new(start_node)
+    Ok(Nfa::new(start_node))
 }
 
 #[cfg(test)]
@@ -161,9 +144,8 @@ mod tests {
 
     #[test]
     pub fn test_basics() {
-        let arena = Corrida::new();
-        let nfa = parse_regex("ab*(c|)", &arena);
-        println!("Done Parsing");
+        let arena = Corrida::new(None);
+        let nfa = parse_regex("ab*(c|)", &arena).unwrap();
         
         assert_eq!(nfa.simulate_iter("".chars()), false);
         assert_eq!(nfa.simulate_iter("a".chars()), true);
@@ -178,31 +160,75 @@ mod tests {
 
     #[test]
     pub fn test_unfriendly() {
-        let arena = Corrida::new();
-        let nfa = parse_regex("a*b*a*b*a*b*a*b*a*b*(|)?a", &arena);
+        let arena = Corrida::new(None);
+        let nfa = parse_regex("a*b*a*b*a*b*a*b*a*b*(|)?a", &arena).unwrap();
 
         let mut test = vec!['b'; 100_000];
         let start = Instant::now();
         assert_eq!(nfa.simulate_slice(&test), false);
         test.push('a');
         assert_eq!(nfa.simulate_slice(&test), true);
-        println!("Unfriendly {:?}", start.elapsed());
+        let a = start.elapsed();
+
+        test.pop();
+        let dfa = nfa.as_dfa(&arena);
+
+        let start = Instant::now();
+        assert_eq!(dfa.simulate_slice(&test), false);
+        test.push('a');
+        assert_eq!(dfa.simulate_slice(&test), true);
+        let b = start.elapsed();
+
+        println!("Unfriendly -- NFA {:?}, DFA {:?}", a, b);
     }
 
     #[test]
     pub fn complicated() {
-        let arena = Corrida::new();
-        let nfa = parse_regex("(((a|b)+c?(a|b)*)?(c(a|b)+|a?b?c+)((a|b|c)*)(a(a)+)?)+", &arena);
+        let arena = Corrida::new(None);
+        let nfa = parse_regex("(((a|b)+c?(a|b)*)?(c(a|b)+|a?b?c+)((a|b|c)*)(a(a)+)?)+", &arena).unwrap();
 
-        let mut testa = vec!['a'; 100_000];
-        let mut testb = vec!['b'; 100_000];
-        let mut testc = vec!['c'; 100_000];
+        let testa = vec!['a'; 100_000];
+        let testb = vec!['b'; 100_000];
+        let testc = vec!['c'; 100_000];
+
         let start = Instant::now();
+        assert!(!nfa.simulate_slice(&testa));
+        assert!(!nfa.simulate_slice(&testb));
+        assert!(nfa.simulate_slice(&testc));
+        let a = start.elapsed();
 
-        assert_eq!(nfa.simulate_slice(&testa), false);
-        assert_eq!(nfa.simulate_slice(&testb), false);
-        assert_eq!(nfa.simulate_slice(&testc), true);
+        let dfa = nfa.as_dfa(&arena);
+        let start = Instant::now();
+        assert!(!dfa.simulate_slice(&testa));
+        assert!(!dfa.simulate_slice(&testb));
+        assert!(dfa.simulate_slice(&testc));
+        let b = start.elapsed();
         
-        println!("Complicated {:?}", start.elapsed());
+        println!("Complicated -- NFA {:?}, DFA {:?}", a, b);
+    }
+
+    #[test]
+    pub fn test_as() {
+        let arena = Corrida::new(None);
+        const N: usize = 100;
+        let nfa = parse_regex(&("a?".repeat(N) + &"a".repeat(N)), &arena).unwrap();
+
+        let test = "a".repeat(N);
+
+        let start = Instant::now();
+        assert!(nfa.simulate_iter(test.chars()));
+        let a = start.elapsed();
+
+        // Friendly simulation explodes on this regex.        
+        // let start = Instant::now();
+        // assert!(nfa.simulate_iter_friendly(test.chars()));
+        // let b = start.elapsed();
+        
+        let dfa = nfa.as_dfa(&arena);
+        let start = Instant::now();
+        assert!(dfa.simulate_iter(test.chars()));
+        let c = start.elapsed();
+
+        println!("a?^na^n -- NFA {:?}, NFA Friendly {:?}, DFA {:?}", a, "N/A", c);
     }
 }

@@ -1,4 +1,3 @@
-use std::ptr::NonNull;
 use std::time::Instant;
 
 use gerber::nfa::*;
@@ -9,7 +8,7 @@ use corrida::*;
 
 
 pub fn main() {
-    let arena = Corrida::new();
+    let arena = Corrida::new(None);
     nfa_state_creator!(($), new_state, arena, u8, 2);
 
     let start_node = {
@@ -34,9 +33,9 @@ pub fn main() {
     test.extend([0,0,0]);
 
     let start = Instant::now();
-    assert_eq!(nfa.simulate_slice_friendly(&test),true);
+    assert!(nfa.simulate_slice_friendly(&test));
     test.push(1);
-    assert_eq!(nfa.simulate_slice_friendly(&test),false);
+    assert!(!nfa.simulate_slice_friendly(&test));
 
     println!("Big Input {:?}", start.elapsed());
 }
