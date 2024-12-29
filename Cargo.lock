@@ -25,6 +25,7 @@ name = "amazon-interview-redemption-regex-parser"
 version = "0.1.0"
 dependencies = [
  "corrida 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gerber 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec",
 ]
 
@@ -81,6 +82,21 @@ dependencies = [
 [[package]]
 name = "gerber"
 version = "0.1.0"
+dependencies = [
+ "corrida 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hashbrown",
+ "impls",
+ "small-map",
+ "smallmap",
+ "smallvec",
+ "smolset",
+]
+
+[[package]]
+name = "gerber"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ad63ed54a76c21239a6dba2f489c210f7ff32cada8e762db9b3b58583b3e"
 dependencies = [
  "corrida 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hashbrown",
